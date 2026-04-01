@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+scikit-learn
+pandas
+apache-airflow
+httpx
+beautifulsoup4
+lxml
+xgboost

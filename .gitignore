@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# Build & Deploy
+build/
+dist/
+*.spec
+.airflow/
+airflow/logs/
+airflow/airflow.db
+airflow/airflow-webserver.pid
+
+# Next.js / Node
+node_modules/
+.next/
+out/
+.DS_Store
+*.local
+
+# Database
+*.db
+*.sqlite3
+
+# Scratch / Temporary
+test.py
+debug_api.py
+output.txt
+ml_model/xgboost_model.json
+ml_model/rf_model.joblib
+
+# Media
+artifacts/
+media/
+*.png
+*.jpg
+*.jpeg
