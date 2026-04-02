@@ -29,11 +29,13 @@ out/
 *.sqlite3
 
 # Scratch / Temporary
-test.py
+tmp_*
+test_*.py
+find_seed.py
 debug_api.py
 output.txt
-ml_model/xgboost_model.json
-ml_model/rf_model.joblib
+*.html
+skills-lock.json
 
 # Media
 artifacts/
@@ -41,3 +43,9 @@ media/
 *.png
 *.jpg
 *.jpeg
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo

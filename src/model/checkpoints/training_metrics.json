@@ -1,0 +1,29 @@
+{
+  "best_val_loss": 0.9667,
+  "best_val_acc": 0.5333,
+  "epochs_trained": 73,
+  "model_config": {
+    "input_dim": 17,
+    "hidden_dim": 64,
+    "num_residual_blocks": 2,
+    "dropout": 0.1,
+    "num_classes": 3
+  },
+  "train_config": {
+    "epochs": 200,
+    "batch_size": 64,
+    "learning_rate": 0.0005,
+    "weight_decay": 0.0001,
+    "patience": 40,
+    "val_split": 0.1,
+    "test_split": 0.05,
+    "random_state": 13
+  },
+  "test_accuracy": 0.5532,
+  "per_class_accuracy": {
+    "H": 0.836,
+    "D": 0.0,
+    "A": 0.557
+  },
+  "test_samples": 517
+}
