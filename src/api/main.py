@@ -6,16 +6,21 @@ Intègre le modèle PyTorch MatchPredictor avec 15 features avancées.
 """
 
 import logging
+import os
+import stripe
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text, select, desc
+from sqlalchemy.orm import Session
 
 from src.model.predict import predictor_service
+from src.database.database import get_session
+from src.database.models import Profile
 
 logger: logging.Logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
@@ -43,6 +48,36 @@ app: FastAPI = FastAPI(
     version="2.1.0",
     lifespan=lifespan,
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "https://next-bet-ai.vercel.app"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================
+# Configuration Stripe
+# ============================================================
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+stripe_webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+
+# Mapping des Price IDs (configurés dans le Dashboard Stripe)
+PRICE_MAP = {
+    "ligue1": {
+        "monthly": os.getenv("STRIPE_PRICE_LIGUE1_MONTHLY"),
+        "yearly": os.getenv("STRIPE_PRICE_LIGUE1_YEARLY"),
+    },
+    "pl": {
+        "monthly": os.getenv("STRIPE_PRICE_PL_MONTHLY"),
+        "yearly": os.getenv("STRIPE_PRICE_PL_YEARLY"),
+    },
+    "ultimate": {
+        "monthly": os.getenv("STRIPE_PRICE_ULTIMATE_MONTHLY"),
+        "yearly": os.getenv("STRIPE_PRICE_ULTIMATE_YEARLY"),
+    }
+}
 
 app.add_middleware(
     CORSMiddleware,
@@ -98,6 +133,14 @@ class PredictResponse(BaseModel):
     timestamp: str
 
 
+class CheckoutRequest(BaseModel):
+    user_id: str
+    tier: str
+    cycle: str # "monthly" | "yearly"
+
+class CheckoutResponse(BaseModel):
+    url: str
+
 class HealthResponse(BaseModel):
     """Schéma de la réponse health check."""
     status: str
@@ -109,7 +152,105 @@ class HealthResponse(BaseModel):
 
 
 # ============================================================
-# Routes
+# Routes Stripe
+# ============================================================
+
+@app.post("/api/stripe/create-checkout-session", response_model=CheckoutResponse, tags=["Stripe"])
+async def create_checkout_session(request: CheckoutRequest):
+    """Crée une session de paiement Stripe pour un utilisateur."""
+    try:
+        price_id = PRICE_MAP.get(request.tier, {}).get(request.cycle)
+        if not price_id:
+            raise HTTPException(status_code=400, detail="Offre ou cycle invalide")
+
+        site_url = os.getenv("NEXT_PUBLIC_SITE_URL", "http://localhost:3000")
+        
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[{"price": price_id, "quantity": 1}],
+            mode="subscription",
+            success_url=f"{site_url}/dashboard?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{site_url}/pricing",
+            metadata={
+                "user_id": request.user_id,
+                "tier": request.tier,
+                "cycle": request.cycle
+            }
+        )
+
+        return CheckoutResponse(url=checkout_session.url)
+    except Exception as e:
+        logger.error(f"Stripe Session Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/stripe/webhook", tags=["Stripe"])
+async def stripe_webhook(request: Request, stripe_signature: str = Header(None)):
+    """Webhook pour gérer les événements Stripe (paiements, annulations)."""
+    payload = await request.body()
+    
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, stripe_signature, stripe_webhook_secret
+        )
+    except Exception as e:
+        logger.error(f"Webhook Signature Error: {e}")
+        raise HTTPException(status_code=400, detail="Signature invalide")
+
+    # Gestion de l'événement : Paiement réussi
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        metadata = session.get('metadata', {})
+        user_id = metadata.get('user_id')
+        tier = metadata.get('tier')
+        cycle = metadata.get('cycle')
+        customer_id = session.get('customer')
+        subscription_id = session.get('subscription')
+
+        if user_id and tier:
+            db: Session = get_session()
+            try:
+                profile = db.query(Profile).filter(Profile.id == user_id).first()
+                if profile:
+                    profile.subscription_tier = tier
+                    profile.billing_cycle = cycle
+                    profile.stripe_customer_id = customer_id
+                    profile.stripe_subscription_id = subscription_id
+                    profile.updated_at = datetime.utcnow()
+                    db.commit()
+                    logger.info(f"Abonnement débloqué pour {user_id} : {tier} ({cycle})")
+                else:
+                    logger.warning(f"Utilisateur {user_id} non trouvé dans la DB lors du webhook")
+            except Exception as e:
+                logger.error(f"Webhook DB Error: {e}")
+                db.rollback()
+            finally:
+                db.close()
+
+    # Gestion de l'événement : Abonnement supprimé / expiré
+    if event['type'] == 'customer.subscription.deleted':
+        subscription = event['data']['object']
+        customer_id = subscription.get('customer')
+
+        if customer_id:
+            db: Session = get_session()
+            try:
+                profile = db.query(Profile).filter(Profile.stripe_customer_id == customer_id).first()
+                if profile:
+                    profile.subscription_tier = "none"
+                    profile.billing_cycle = None
+                    profile.updated_at = datetime.utcnow()
+                    db.commit()
+                    logger.info(f"Abonnement révoqué pour le client Stripe {customer_id}")
+            except Exception as e:
+                logger.error(f"Webhook DB Delete Error: {e}")
+                db.rollback()
+            finally:
+                db.close()
+
+    return {"status": "success"}
+
+# ============================================================
+# Routes Predictions
 # ============================================================
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 def health_check() -> HealthResponse:
@@ -328,7 +469,8 @@ def get_upcoming_predictions(league: str = "Ligue 1") -> list[dict]:
                 "id": idx + 1,
                 "homeTeam": home_name,
                 "awayTeam": away_name,
-                "date": date_fmt,
+                "date": m["date"], # Keep original ISO string for frontend sorting and Date() parsing
+                "dateFormatted": date_fmt, # Pass the friendly format explicitly
                 "competition": league,
                 "injuries": m["injuriesHome"] + m["injuriesAway"],
                 "valueBet": {"active": False, "edge": 0, "target": None},

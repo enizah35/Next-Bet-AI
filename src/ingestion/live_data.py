@@ -9,6 +9,7 @@ import random
 import re
 from datetime import datetime, timedelta
 from typing import Any
+import concurrent.futures
 
 import feedparser
 import requests
@@ -44,27 +45,19 @@ RSS_FEEDS = {
 NEGATIVE_KEYWORDS = ["blessé", "blessure", "absent", "forfait", "injury", "out", "doubt", "sidelined"]
 
 
-def get_news_alerts(team_name: str, league: str) -> list[str]:
-    """Scannés les flux RSS pour le nom de l'équipe et repère les mots-clés de blessures ou alertes."""
-    feed_url = RSS_FEEDS.get(league)
+def get_news_alerts(team_name: str, entries: list) -> list[str]:
+    """Scanne les entrées RSS pour le nom de l'équipe et repère les mots-clés de blessures ou alertes."""
     alerts = []
-    if not feed_url:
-        return alerts
-
     try:
-        feed = feedparser.parse(feed_url)
-        for entry in feed.entries[:20]:  # Scan les 20 dernières actualités
+        for entry in entries:
             title: str = entry.title
-            # Si l'équipe est mentionnée
             if team_name.lower() in title.lower():
-                # Vérification présence de mots clés négatifs
                 if any(kw in title.lower() for kw in NEGATIVE_KEYWORDS):
                     alerts.append(title)
         
-        # Max 2 alerts
         return alerts[:2]
     except Exception as e:
-        logger.warning(f"Erreur RSS pour {team_name} : {e}")
+        logger.warning(f"Erreur parsage RSS pour {team_name} : {e}")
         return []
 
 
@@ -163,22 +156,46 @@ def get_upcoming_matches(league: str) -> list[dict]:
 
 
 def enrich_pipeline(league: str) -> list[dict]:
-    """Exécute tout le pipeline de récupération (Météo, RSS, Matchs) et retourne la raw list."""
+    """Exécute tout le pipeline de récupération (Météo, RSS, Matchs) et retourne la raw list (Optimisé)."""
     logger.info(f"--- Démarrage Pipeline Live Data pour {league} ---")
     matches = get_upcoming_matches(league)
     
     enriched = []
     
+    # Pre-fetch RSS ONCE for the whole league
+    feed_url = RSS_FEEDS.get(league)
+    feed_entries = []
+    if feed_url:
+        try:
+            feed = feedparser.parse(feed_url)
+            feed_entries = feed.entries[:20]
+        except Exception as e:
+            logger.warning(f"Erreur requête globale RSS: {e}")
+
+    # Process matches sequentially for news, but pre-fetch weather in parallel
+    home_teams = [m["homeTeam"] for m in matches]
+    
+    # Fetch weather concurrently
+    weather_results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_ht = {executor.submit(get_weather, ht): ht for ht in home_teams}
+        for future in concurrent.futures.as_completed(future_to_ht):
+            ht = future_to_ht[future]
+            try:
+                weather_results[ht] = future.result()
+            except Exception:
+                weather_results[ht] = 1
+
     for m in matches:
         ht = m["homeTeam"]
         at = m["awayTeam"]
         
-        # Météo du stade (Home)
-        weather_code = get_weather(ht)
+        # Use parallelized weather
+        weather_code = weather_results.get(ht, 1)
         
-        # Actualités blessures
-        home_news = get_news_alerts(ht, league)
-        away_news = get_news_alerts(at, league)
+        # Actualités blessures using pre-fetched entries
+        home_news = get_news_alerts(ht, feed_entries)
+        away_news = get_news_alerts(at, feed_entries)
         
         enriched.append({
             "homeTeam": ht,

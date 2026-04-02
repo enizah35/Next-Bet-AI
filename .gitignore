@@ -23,6 +23,21 @@ node_modules/
 out/
 .DS_Store
 *.local
+.env.local
+
+# Models & Large Files
+*.pt
+*.pth
+*.pkl
+models/checkpoints/
+
+# Agentic / Meta
+.gemini/
+.agents/
+.agent/
+_agents/
+_agent/
+*.md_agent
 
 # Database
 *.db

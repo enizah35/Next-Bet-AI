@@ -37,6 +37,9 @@ class Profile(Base):
 
     id: str = Column(String(36), primary_key=True)  # UUID de Supabase Auth
     subscription_tier: str = Column(String(20), default="none")
+    billing_cycle: str = Column(String(20), nullable=True) # 'monthly' | 'yearly'
+    stripe_customer_id: str | None = Column(String(100), nullable=True)
+    stripe_subscription_id: str | None = Column(String(100), nullable=True)
     trial_started_at = Column(DateTime, nullable=True)
     is_trial_used: bool = Column(Boolean, default=False)
     updated_at = Column(DateTime, nullable=True)
