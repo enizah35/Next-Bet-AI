@@ -1,12 +1,12 @@
 'use client'
 
-import React, { useState } from 'react';
+import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { signup } from '../auth/actions';
 import Logo from '@/components/Logo';
 
-export default function RegisterPage() {
+function RegisterContent() {
   const searchParams = useSearchParams();
   const error = searchParams.get('error');
   const [agreed, setAgreed] = useState(false);
@@ -262,5 +262,13 @@ export default function RegisterPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-darker)', color: 'var(--color-accent)' }}>Chargement en cours...</div>}>
+      <RegisterContent />
+    </Suspense>
   );
 }
