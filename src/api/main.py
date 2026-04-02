@@ -31,13 +31,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    logger.info("--- Démarrage de l'API Next-Bet-AI (v2.2) ---")
     success: bool = predictor_service.load()
     if success:
         logger.info("Modèle PyTorch (15 features) chargé avec succès")
     else:
         logger.warning("Modèle PyTorch non disponible — /predict utilisera le fallback")
+    
+    # Vérification des clés Stripe
+    if not stripe.api_key:
+        logger.error("DANGER : STRIPE_SECRET_KEY non configurée !")
+    else:
+        logger.debug("Stripe API key détectée")
+
+    logger.info("--- API Prête à recevoir des requêtes ---")
     yield
-    # Shutdown (rien à faire pour l'instant)
+    # Shutdown
+    logger.info("Fermeture de l'application...")
 
 # ============================================================
 # Application FastAPI
@@ -78,15 +88,6 @@ PRICE_MAP = {
         "yearly": os.getenv("STRIPE_PRICE_ULTIMATE_YEARLY"),
     }
 }
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 # ============================================================
 # Schémas Pydantic

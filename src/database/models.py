@@ -42,6 +42,7 @@ class Profile(Base):
     stripe_subscription_id: str | None = Column(String(100), nullable=True)
     trial_started_at = Column(DateTime, nullable=True)
     is_trial_used: bool = Column(Boolean, default=False)
+    is_beta_approved: bool = Column(Boolean, default=False)  # Nouveau : Accès Beta
     updated_at = Column(DateTime, nullable=True)
 
     def __repr__(self) -> str:
