@@ -1,101 +1,80 @@
-# 🤖 Next-Bet-AI - Expert Trading Engine (v3.0)
+# 🤖 Next-Bet-AI — Neural Sports Prediction Engine (v2.0)
 
-![Next-Bet-AI Logo](assets/logo.png)
+[![Next-Bet-AI](https://img.shields.io/badge/Version-2.0-orange?style=for-the-badge)](https://github.com/enizah35/Next-Bet-AI)
+[![Stack](https://img.shields.io/badge/Stack-Next.js%20%7C%20FastAPI%20%7C%20PyTorch-blue?style=for-the-badge)](https://pytorch.org/)
 
-**Next-Bet-AI** est une plateforme de trading et d'analyse prédictive de nouvelle génération pour le football (Ligue 1, Premier League). En combinant le **Scraping Real-Time**, le **Deep Learning (PyTorch)** et la **Détection d'Anomalies (Value Bets)**, l'intelligence artificielle y identifie les opportunités de paris sportifs les plus rentables.
-
-L'objectif du système est de dépasser substantiellement la baseline globale du marché (qui situe la probabilité native d'une victoire à domicile autour de 45%). Dans sa version actuelle (V3), Next-Bet-AI a atteint avec succès la barre critique des **55.3% d'Accuracy** en test clos.
-
----
-
-## 🌟 Fonctionnalités Clés et Ingénierie
-
-- **🛠 Pipeline de Données Live Avancé** : Récupération asynchrone des derniers calendriers historiques et futurs via ESPN et API Football, avec synchronisation dynamique de la météo des stades (Open-Meteo) et intégration des alertes blessures/presse (Flux RSS BBC/RMC pour EPL & L1).
-- **📊 Intégration Understat (xG & xPts)** : Le cœur mathématique se nourrit massivement aux métriques avancées d'**Expected Goals** (xG) et **Expected Points** (xPts) moissonnées asynchronement sur Understat pour la dernière décennie. Ces indicateurs surpassent le simple comptage de buts pour une modélisation purement probabiliste.
-- **🧠 Moteurs "Deep Learning" (PyTorch)** : Initialement basé sur de grands réseaux résiduels, le système V3 s'est purifié autour d'une architecture Linéaire ultra-rapide et parfaitement étudiée pour les variables tabulaires. En retirant le bruit et le déséquilibre imposés de classe, les inférences sont tranchantes.
-- **💰 Détection de Value Bets** : Comparaison intelligente entre les probabilités certifiées de l'IA et les cotes réelles des bookmakers (Bet365 / Pinnacle) pour isoler le vrai *Edge*.
-- **🖥 Dashboard Premium** : Interface Next.js Ultra-Réactive avec un design **Glassmorphism**, des animations fluides, un sélecteur dynamique de ligues et une modale d'insight temps-réel (Météo/News).
+**Next-Bet-AI** est une plateforme SaaS de pointe dédiée à l'analyse prédictive de football (Ligue 1 & Premier League). Propulsion par un moteur de **Deep Learning PyTorch**, Next-Bet-AI traite des milliers de points de données (xG, Elo, forme, météo, blessures) pour identifier les **Value Bets** avec une précision mathématique.
 
 ---
 
-## 🏗 Stack Technique Orientée V3
+## 🌟 Fonctionnalités Clés
 
-| Layer | Technologie | Détails |
+- **🧠 Neural Engine (PyTorch)** : Modèle de Deep Learning entraîné sur 10 ans de données Understat/ESPN. Architecture optimisée pour la classification probabiliste (Win/Draw/Loss).
+- **📡 Pipeline Real-Time** : Ingestion asynchrone des données `Live` (Calendriers ESPN, Météo Open-Meteo, Alertes Presse RSS RMC/BBC).
+- **📊 Méthodologie xG / xPts** : Intégration profonde des métriques Understat pour capturer la performance réelle au-delà du score final.
+- **💰 Détection de Value Bets** : Algorithme comparant les probabilités IA aux cotes bookmakers pour isoler l'avantage statistique (Edge).
+- **🔐 SaaS Ready** : Gestion complète des comptes utilisateurs, authentification via **Supabase Auth**, et gestion des abonnements (Profile & Forfaits).
+- **🖥 Dashboard Premium** : Interface Next.js réactive, design **Glassmorphism**, mode sombre dynamique et prédictions débloquables.
+
+---
+
+## 🏗 Stack Technique (v2.0)
+
+| Composant | Technologie | Rôle |
 | :--- | :--- | :--- |
-| **Frontend** | [Next.js 14](https://nextjs.org/) (React) | Vanilla CSS avec variables globales, flexiblité Glassmorphism |
-| **Backend** | [FastAPI](https://fastapi.tiangolo.com/) (Python) | Architecture ASGI, Uvicorn, Modèles Pydantic stricts |
-| **Database** | PostgreSQL | Interfacé avec SQLAlchemy 2.0 (ORM) et migrations fluides |
-| **Data Eng & ML** | [PyTorch](https://pytorch.org/), Pandas | Algorithme Linéaire PyTorch, Imputation Statistique, Rolling Windows |
-| **Scraping** | `aiohttp`, `understat`, `feedparser` | Extractions massivement asynchrones (aiohttp) et Parser XML |
-| **Orchestration** | Apache Airflow (Docker) | Jobs quotidiens sous environnement Python 3.12 |
+| **Frontend** | [Next.js 14](https://nextjs.org/) (App Router) | Interface utilisateur & Dashboard SaaS |
+| **Authentification** | [Supabase](https://supabase.com/) | Gestion sécurisée des sessions & profils |
+| **Backend** | [FastAPI](https://fastapi.tiangolo.com/) | API haute performance (Inférence & Data Pipeline) |
+| **IA / ML** | [PyTorch](https://pytorch.org/) | Moteur de prédiction neuronal (MatchPredictor) |
+| **Base de données** | [PostgreSQL](https://www.postgresql.org/) | Stockage des features historiques et calculs Elo |
+| **Orchestration** | Apache Airflow | Automatisation des pipelines d'ingestion quotidiens |
 
 ---
 
-## 🚀 Installation & Lancement Rapide (Local)
+## 🚀 Installation Rapide (Local)
 
-### 1. Prérequis
-- Python 3.10+ (Recommandation : 3.12 pour compatibilité optimale Airflow)
-- Node.js 18+
-- Base de données PostgreSQL locale (ou Docker Compose)
-
-### 2. Démarrage de l'Environnement Backend
+### 1. Backend (API & Model)
 ```bash
-# Activation de l'environnement virtuel Python
-python -m venv .venv
-source .venv/bin/activate       # Mac/Linux
-# .\.venv\Scripts\Activate.ps1  # Windows
+# Activation de l'environnement
+# .\.venv\Scripts\Activate.ps1 (Windows) ou source .venv/bin/activate (Unix)
 
-# Installation des dépendances du projet
+# Installation des dépendances
 pip install -r requirements.txt
 
-# Optionnel (Si Base de données vide) - Lancement de l'Ingestion 
-python src/ingestion/live_data.py
-python src/ingestion/load_understat.py
-
-# Démarrage de l'API FastAPI (Port 8000)
+# Lancement de l'API (Port 8000)
 python -m src.api.main
 ```
 
-### 3. Démarrage du Dashboard Frontend
+### 2. Frontend (Dashboard)
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-L'interface sera accessible de manière fluide sur `http://localhost:3000`.
-
-### 4. Entraînement Deep Learning (Reproductibilité)
-Un script complet est prêt à être relancé si vous souhaitez rafraîchir le scaler et les poids neuronaux après de nouvelles saisons de foot :
-```bash
-# Lance le Feature Engineering de reconstruction (.rolling(5))
-python -m src.features.build_features
-
-# Démarre l'entraînement PyTorch (Split automatique 85/10/5)
-python -m src.model.train
-```
+Accès : `http://localhost:3000`
 
 ---
 
-## 📂 Structure Pédagogique du Projet
+## 📂 Structure du projet (Consolidée)
 
 ```text
 next-bet-ai/
-├── frontend/                 # Application React / Next.js
-│   └── src/app/              # Glassmorphism views, Modales & Layouts 
 ├── src/
-│   ├── api/                  # Routes FastAPI, gestionnaires HTTP Live
-│   ├── database/             # Modèles SQLAlchemy (Team, MatchRaw, MatchFeature)
-│   ├── features/             # Feature Engineering (Calcul Elo, Form, xG Proxy part)
-│   ├── ingestion/            # Pipelines ESPN, Understat, Seeders
-│   ├── model/                # Architecture PyTorch (network.py), checkpt .pt et Inférence
-│   └── utils/                # Mappings inter-API complexes
-└── README.md
+│   ├── api/          # Backend FastAPI (Routes & Inférence)
+│   ├── model/        # Cœur IA (Architecture PyTorch & Entraînement)
+│   ├── ingestion/    # Pipelines Live (ESPN, Weather, RSS)
+│   ├── database/     # Modèles PostgreSQL & SQLAlchemy
+│   ├── features/     # Feature Engineering (xG, Elo, Form)
+│   └── utils/        # Mappings et helpers
+├── frontend/         # Application Next.js SaaS
+├── dags/             # Orchestration Airflow
+└── docker-compose.yml
 ```
 
 ---
 
-## 🛡 License
-Ce projet est sous licence MIT. Pour un usage commercial intensif ou une redistribution sous la plateforme de paris d'un livreur existant, veuillez nous contacter formellement.
+## 🛡 License & Contact
+Projet sous licence MIT. Développé pour la recherche avancée en analyse de données sportives.
 
 ---
-*Developed with ❤️ for the future of mathematically proven sports analytics.*
+*Developed with ❤️ by the Next-Bet-AI Team.*
