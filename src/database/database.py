@@ -15,8 +15,14 @@ load_dotenv()
 logger: logging.Logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 
-# URL de connexion PostgreSQL depuis le fichier .env
-DATABASE_URL: str = os.getenv("DB_URL", "postgresql://user:pass@localhost:5432/nextbet")
+# URL de connexion PostgreSQL
+DB_URL_VAR = os.getenv("DB_URL")
+if not DB_URL_VAR:
+    logger.warning("ALERTE : DB_URL non détectée dans les variables d'environnement ! Utilisation du fallback localhost.")
+else:
+    logger.info(f"DB_URL détectée (Longueur: {len(DB_URL_VAR)} caractères)")
+
+DATABASE_URL: str = DB_URL_VAR or "postgresql://user:pass@localhost:5432/nextbet"
 
 # Création de l'engine SQLAlchemy 2.0 avec pool de connexions
 engine = create_engine(
