@@ -19,6 +19,7 @@ numpy
 fastapi
 uvicorn[standard]
 pydantic>=2.0
+stripe
 
 # --- Scraping & HTTP ---
 httpx
@@ -26,7 +27,7 @@ requests
 understat
 aiohttp
 
-# --- Deep Learning (Phase suivante) ---
+# --- Deep Learning ---
 torch
 torchvision
 
@@ -37,7 +38,3 @@ scikit-learn
 # --- Dev & Test ---
 pytest
 black
-
-# NOTE : apache-airflow doit être installé séparément
-# car il impose des contraintes strictes (Python <=3.12).
-# Commande : pip install apache-airflow --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.0/constraints-3.12.txt"
