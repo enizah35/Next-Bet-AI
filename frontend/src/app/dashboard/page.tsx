@@ -79,22 +79,11 @@ export default function DashboardPage() {
            (tier === 'pl' && league === 'Premier League');
   };
 
-  if (!authLoading && !user) {
+  if (authLoading || (!user && !authLoading)) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'var(--bg-gradient)' }}>
-        <div className="auth-gate-modal" style={{ maxWidth: '450px', background: 'var(--glass-bg)', backdropFilter: 'blur(20px)', padding: '3rem' }}>
-          <div style={{ fontSize: '4rem', marginBottom: '1.5rem' }}>🔐</div>
-          <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '1rem', color: 'var(--text-primary)' }}>Accès Réservé</h1>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', lineHeight: 1.6 }}>
-            Connectez-vous pour accéder à la Bêta Privée de Next-Bet-AI et voir les prédictions en temps réel.
-          </p>
-          <Link href="/login" className="auth-submit" style={{ display: 'block', width: '100%', textDecoration: 'none' }}>
-            Se connecter
-          </Link>
-          <p style={{ marginTop: '1.5rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-            Pas encore de compte ? <Link href="/register" style={{ color: 'var(--color-accent)', textDecoration: 'none', fontWeight: 600 }}>Inscrivez-vous à la liste d'attente</Link>
-          </p>
-        </div>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'var(--bg-gradient)', flexDirection: 'column', gap: '20px' }}>
+        <h2 style={{ color: 'var(--text-primary)' }}>Vérification de l'accès...</h2>
+        <p style={{ color: 'var(--text-secondary)' }}>Préparation de votre espace personnel</p>
       </div>
     );
   }
