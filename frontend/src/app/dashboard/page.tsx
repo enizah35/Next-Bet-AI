@@ -103,6 +103,9 @@ export default function DashboardPage() {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'var(--bg-gradient)' }}>
         <div className="auth-gate-modal" style={{ maxWidth: '450px', background: 'var(--glass-bg)', backdropFilter: 'blur(20px)', padding: '3rem', textAlign: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '2rem' }}>
+            <Logo width={220} height={55} />
+          </div>
           <div style={{ fontSize: '4rem', marginBottom: '1.5rem' }}>⏳</div>
           <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '1rem', color: 'var(--text-primary)' }}>Bêta en attente</h1>
           <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', lineHeight: 1.6 }}>
@@ -110,13 +113,23 @@ export default function DashboardPage() {
             <br/><br/>
             Vous recevrez un accès complet dès que votre compte sera approuvé.
           </p>
-          <div style={{ padding: '1rem', background: 'rgba(255,193,7,0.1)', border: '1px solid #ffc107', borderRadius: '12px', color: '#ffc107', fontSize: '0.9rem' }}>
+          <div style={{ padding: '1rem', background: 'rgba(255,193,7,0.1)', border: '1px solid #ffc107', borderRadius: '12px', color: '#ffc107', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
             Statut : **En attente d'autorisation**
           </div>
+          <button 
+            onClick={() => {
+              window.location.reload();
+            }}
+            className="auth-submit" 
+            style={{ width: '100%', padding: '0.8rem', fontSize: '0.95rem' }}
+          >
+            Rafraîchir mon statut
+          </button>
         </div>
       </div>
     );
   }
+
 
 
   return (
