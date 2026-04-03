@@ -25,11 +25,10 @@ out/
 *.local
 .env.local
 
-# Models & Large Files
-*.pt
+# Models & Large Files (autoriser les checkpoints du projet via LFS)
+# *.pt  <- commenté : le modèle est versionné via Git LFS sur HuggingFace
 *.pth
 *.pkl
-models/checkpoints/
 
 # Agentic / Meta
 .gemini/
