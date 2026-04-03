@@ -46,7 +46,8 @@ export default function DashboardPage() {
     }
 
     setLoading(true);
-    fetch(`http://localhost:8000/predictions/upcoming?league=${league}`)
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://enizah35-next-bet-ai.hf.space";
+    fetch(`${apiUrl}/predictions/upcoming?league=${league}`)
       .then(res => res.json())
       .then(data => {
         setMatches(data);

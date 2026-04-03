@@ -32,7 +32,8 @@ export default function PricingPage() {
     setPurchasing(tier);
     
     try {
-      const response = await fetch('http://localhost:8000/api/stripe/create-checkout-session', {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://enizah35-next-bet-ai.hf.space";
+      const response = await fetch(`${apiUrl}/api/stripe/create-checkout-session`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
