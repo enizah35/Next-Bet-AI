@@ -30,6 +30,18 @@ UNDERSTAT_TO_FD = {
     "Angers": "Angers",
     "Troyes": "Troyes",
     "Bordeaux": "Bordeaux",
+    "Dijon": "Dijon",
+    "Caen": "Caen",
+    "Guingamp": "Guingamp",
+    "Amiens": "Amiens",
+    "Nimes": "Nimes",
+    "Nancy": "Nancy",
+    "Bastia": "Bastia",
+    "Sochaux": "Sochaux",
+    "Valenciennes": "Valenciennes",
+    "Ajaccio": "Ajaccio",
+    "Ajaccio GFCO": "Ajaccio GFCO",
+    "Evian Thonon Gaillard": "Evian Thonon Gaillard",
 
     # == Premier League ==
     "Manchester United": "Man United",
@@ -56,8 +68,83 @@ UNDERSTAT_TO_FD = {
     "Southampton": "Southampton",
     "Leeds": "Leeds",
     "Ipswich": "Ipswich",
+    "Queens Park Rangers": "QPR",
+    "West Bromwich Albion": "West Brom",
+    "Watford": "Watford",
+    "Stoke City": "Stoke",
+    "Sunderland": "Sunderland",
+    "Hull City": "Hull",
+    "Swansea": "Swansea",
+    "Norwich": "Norwich",
+    "Cardiff": "Cardiff",
+    "Middlesbrough": "Middlesbrough",
+    "Wigan Athletic": "Wigan",
+    "Reading": "Reading",
+    "Blackburn Rovers": "Blackburn",
+    "Bolton": "Bolton",
+    "Blackpool": "Blackpool",
+    "Birmingham": "Birmingham",
+    "Huddersfield": "Huddersfield",
 }
+
+# Mapping : "Nom ESPN API" -> "Nom DB (Football-Data)"
+ESPN_TO_FD: dict[str, str] = {
+    # == Ligue 1 ==
+    "Stade Rennais": "Rennes",
+    "Stade Rennais FC": "Rennes",
+    "Le Havre AC": "Le Havre",
+    "AJ Auxerre": "Auxerre",
+    "AS Monaco": "Monaco",
+    "RC Lens": "Lens",
+    "RC Strasbourg": "Strasbourg",
+    "Strasbourg Alsace": "Strasbourg",
+    "LOSC Lille": "Lille",
+    "LOSC": "Lille",
+    "OGC Nice": "Nice",
+    "Olympique Lyonnais": "Lyon",
+    "Olympique de Marseille": "Marseille",
+    "Olympique Marseille": "Marseille",
+    "Paris Saint-Germain": "Paris SG",
+    "Paris Saint Germain": "Paris SG",
+    "PSG": "Paris SG",
+    "FC Nantes": "Nantes",
+    "Stade Brestois": "Brest",
+    "Stade Brestois 29": "Brest",
+    "Montpellier HSC": "Montpellier",
+    "Toulouse FC": "Toulouse",
+    "Stade de Reims": "Reims",
+    "Clermont Foot": "Clermont",
+    "Clermont Foot 63": "Clermont",
+    "AS Saint-Étienne": "St Etienne",
+    "AS Saint-Etienne": "St Etienne",
+    "Saint-Étienne": "St Etienne",
+    "Saint-Etienne": "St Etienne",
+    "FC Lorient": "Lorient",
+    "FC Metz": "Metz",
+    "SCO Angers": "Angers",
+    "Angers SCO": "Angers",
+    # == Premier League ==
+    "Manchester United": "Man United",
+    "Manchester City": "Man City",
+    "Newcastle United": "Newcastle",
+    "Wolverhampton Wanderers": "Wolves",
+    "Wolverhampton": "Wolves",
+    "Wolverhampton Wanderers FC": "Wolves",
+    "Nottingham Forest": "Nott'm Forest",
+    "Sheffield United": "Sheffield United",
+    "West Ham United": "West Ham",
+    "AFC Bournemouth": "Bournemouth",
+    "Leicester City": "Leicester",
+    "Ipswich Town": "Ipswich",
+    "Luton Town": "Luton",
+}
+
 
 def get_fd_name(understat_name: str) -> str:
     """Retourne le nom officiel (DB) ou le nom original si non mappé."""
     return UNDERSTAT_TO_FD.get(understat_name, understat_name)
+
+
+def get_fd_name_espn(espn_name: str) -> str:
+    """Retourne le nom officiel (DB) depuis un nom ESPN, ou le nom original si non mappé."""
+    return ESPN_TO_FD.get(espn_name, espn_name)

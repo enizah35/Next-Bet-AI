@@ -112,9 +112,10 @@ def get_upcoming_matches(league: str) -> list[dict]:
                 date_iso = e.get("date")
                 
                 if home and away:
+                    from src.utils.mappings import get_fd_name_espn
                     matches_list.append({
-                        "homeTeam": home,
-                        "awayTeam": away,
+                        "homeTeam": get_fd_name_espn(home),
+                        "awayTeam": get_fd_name_espn(away),
                         "dateStr": date_iso, # Format 2026-04-01T20:00Z
                     })
     except Exception as ex:
@@ -156,13 +157,13 @@ def get_upcoming_matches(league: str) -> list[dict]:
 
 
 def enrich_pipeline(league: str) -> list[dict]:
-    """Exécute tout le pipeline de récupération (Météo, RSS, Matchs) et retourne la raw list (Optimisé)."""
+    """Exécute tout le pipeline de récupération (Météo, RSS, Sentiment, Matchs) et retourne la raw list (Optimisé)."""
     logger.info(f"--- Démarrage Pipeline Live Data pour {league} ---")
     matches = get_upcoming_matches(league)
     
     enriched = []
     
-    # Pre-fetch RSS ONCE for the whole league
+    # Pre-fetch RSS ONCE for the whole league (injuries)
     feed_url = RSS_FEEDS.get(league)
     feed_entries = []
     if feed_url:
@@ -171,6 +172,14 @@ def enrich_pipeline(league: str) -> list[dict]:
             feed_entries = feed.entries[:20]
         except Exception as e:
             logger.warning(f"Erreur requête globale RSS: {e}")
+
+    # Pre-fetch RSS pour le sentiment (sources multiples)
+    from src.ingestion.news_sentiment import fetch_rss_entries, get_match_sentiment
+    sentiment_entries = fetch_rss_entries(league)
+
+    # Pre-fetch cotes live (1 seul appel API pour toute la ligue)
+    from src.ingestion.live_odds import fetch_live_odds, get_match_odds
+    odds_cache = fetch_live_odds(league)
 
     # Process matches sequentially for news, but pre-fetch weather in parallel
     home_teams = [m["homeTeam"] for m in matches]
@@ -196,6 +205,12 @@ def enrich_pipeline(league: str) -> list[dict]:
         # Actualités blessures using pre-fetched entries
         home_news = get_news_alerts(ht, feed_entries)
         away_news = get_news_alerts(at, feed_entries)
+
+        # Analyse de sentiment (utilise les entries déjà récupérées)
+        sentiment = get_match_sentiment(ht, at, league, entries=sentiment_entries)
+
+        # Cotes live bookmakers
+        match_odds = get_match_odds(ht, at, odds_cache)
         
         enriched.append({
             "homeTeam": ht,
@@ -206,6 +221,12 @@ def enrich_pipeline(league: str) -> list[dict]:
             "injuriesAway": away_news,
             "injuriesCountHome": len(home_news),
             "injuriesCountAway": len(away_news),
+            "homeSentiment": sentiment["home_sentiment"],
+            "awaySentiment": sentiment["away_sentiment"],
+            "sentimentDiff": sentiment["sentiment_diff"],
+            "homeHeadlines": sentiment["home_headlines"],
+            "awayHeadlines": sentiment["away_headlines"],
+            "odds": match_odds,  # None si pas de cotes dispo
         })
         
     return enriched

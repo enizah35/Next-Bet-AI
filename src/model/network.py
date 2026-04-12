@@ -8,31 +8,55 @@ import torch
 import torch.nn as nn
 
 
+class ResidualBlock(nn.Module):
+    """Bloc résiduel : skip-connection + couche dense."""
+
+    def __init__(self, dim: int, dropout: float) -> None:
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.BatchNorm1d(dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.block(x)
+
+
 class MatchPredictor(nn.Module):
     """
-    Réseau de neurones fully-connected (MLP) allégé pour données tabulaires.
-    Très efficace pour la prédiction avec un nombre restreint de features (17).
+    MLP avec blocs résiduels pour données tabulaires.
+    Architecture : Projection → N blocs résiduels → Tête de classification.
     """
 
     def __init__(
         self,
-        input_dim: int = 17,
+        input_dim: int = 16,
         hidden_dim: int = 64,
-        num_residual_blocks: int = 2,  # gardé pour compatibilité de signature mais non utilisé ou défini comme profondeur
-        dropout: float = 0.1,
+        num_residual_blocks: int = 2,
+        dropout: float = 0.3,
         num_classes: int = 3,
     ) -> None:
         super().__init__()
 
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, num_classes)
+        self.input_proj = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
         )
 
+        self.residual_blocks = nn.Sequential(
+            *[ResidualBlock(hidden_dim, dropout) for _ in range(num_residual_blocks)]
+        )
+
+        self.head = nn.Linear(hidden_dim, num_classes)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass complet.
-        """
-        return self.net(x)
+        x = self.input_proj(x)
+        x = self.residual_blocks(x)
+        return self.head(x)
 
     def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
         """Retourne les probabilités softmax pour chaque classe."""
@@ -46,10 +70,10 @@ class MatchPredictor(nn.Module):
 # Config par défaut du modèle
 # ============================================================
 DEFAULT_MODEL_CONFIG: dict = {
-    "input_dim": 17,
+    "input_dim": 14,
     "hidden_dim": 64,
     "num_residual_blocks": 2,
-    "dropout": 0.1,
+    "dropout": 0.3,
     "num_classes": 3,
 }
 

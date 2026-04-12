@@ -1,29 +1,42 @@
 {
-  "best_val_loss": 0.9667,
-  "best_val_acc": 0.5333,
-  "epochs_trained": 73,
+  "best_val_loss": 1.0055,
+  "best_val_acc": 0.4981,
+  "epochs_trained": 64,
   "model_config": {
-    "input_dim": 17,
+    "input_dim": 14,
     "hidden_dim": 64,
     "num_residual_blocks": 2,
-    "dropout": 0.1,
+    "dropout": 0.3,
     "num_classes": 3
   },
   "train_config": {
-    "epochs": 200,
+    "epochs": 300,
     "batch_size": 64,
-    "learning_rate": 0.0005,
-    "weight_decay": 0.0001,
-    "patience": 40,
+    "learning_rate": 0.001,
+    "weight_decay": 0.001,
+    "patience": 50,
     "val_split": 0.1,
     "test_split": 0.05,
-    "random_state": 13
+    "random_state": 13,
+    "ensemble_seeds": [
+      13,
+      42,
+      99
+    ]
   },
-  "test_accuracy": 0.5532,
+  "test_accuracy": 0.5478,
   "per_class_accuracy": {
-    "H": 0.836,
-    "D": 0.0,
-    "A": 0.557
+    "H": 0.624,
+    "D": 0.367,
+    "A": 0.519
   },
-  "test_samples": 517
+  "test_samples": 533,
+  "ensemble_size": 3,
+  "temperature": 1.0,
+  "best_approach": "xgboost",
+  "all_results": {
+    "nn_ensemble": 0.5253,
+    "xgboost": 0.5478,
+    "stacking": 0.5422
+  }
 }

@@ -167,9 +167,68 @@ class MatchFeature(Base):
     home_xpts_last_5: float | None = Column(Float, nullable=True)
     away_xpts_last_5: float | None = Column(Float, nullable=True)
 
+    # Série d'invincibilité & momentum
+    home_unbeaten_streak: float | None = Column(Float, nullable=True)
+    away_unbeaten_streak: float | None = Column(Float, nullable=True)
+    home_momentum: float | None = Column(Float, nullable=True)
+    away_momentum: float | None = Column(Float, nullable=True)
+
+    # Tirs cadrés (rolling 5 matchs)
+    home_sot_last_5: float | None = Column(Float, nullable=True)
+    away_sot_last_5: float | None = Column(Float, nullable=True)
+    home_sot_conceded_last_5: float | None = Column(Float, nullable=True)
+    away_sot_conceded_last_5: float | None = Column(Float, nullable=True)
+
+    # Confrontations directes (H2H)
+    h2h_dominance: float | None = Column(Float, nullable=True)
+    h2h_avg_goals: float | None = Column(Float, nullable=True)
+    h2h_matches: float | None = Column(Float, nullable=True)
+
     # Relation inverse
     match = relationship("MatchRaw", back_populates="features")
 
     def __repr__(self) -> str:
         return f"<MatchFeature(match_id={self.match_id}, elo_diff={self.elo_diff}, home_pts_5={self.home_pts_last_5})>"
+
+
+class PredictionLog(Base):
+    """Historique des prédictions IA pour le suivi de performance."""
+    __tablename__ = "prediction_logs"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Match info
+    home_team: str = Column(String(100), nullable=False)
+    away_team: str = Column(String(100), nullable=False)
+    league: str = Column(String(50), nullable=False)
+    match_date = Column(DateTime, nullable=False)
+    
+    # Prédiction
+    prediction: str = Column(String(100), nullable=False)  # "H", "D", "A", "1 ou N (Double chance)", etc.
+    tip_type: str = Column(String(50), nullable=False)     # "result", "btts", "over25", "double_chance"
+    confidence: float = Column(Float, nullable=False)
+    odds: float = Column(Float, nullable=True)
+    
+    # Probabilités du modèle au moment de la prédiction
+    prob_home: float | None = Column(Float, nullable=True)
+    prob_draw: float | None = Column(Float, nullable=True)
+    prob_away: float | None = Column(Float, nullable=True)
+    
+    # Résultat (renseigné après le match)
+    actual_result: str | None = Column(String(10), nullable=True)  # "H", "D", "A"
+    actual_home_goals: int | None = Column(Integer, nullable=True)
+    actual_away_goals: int | None = Column(Integer, nullable=True)
+    is_won: bool | None = Column(Boolean, nullable=True)  # None = pending, True = won, False = lost
+    
+    # Timestamps
+    created_at = Column(DateTime, nullable=False)
+    verified_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("match_date", "home_team", "away_team", "tip_type", name="uq_prediction_log"),
+    )
+
+    def __repr__(self) -> str:
+        status = "won" if self.is_won else ("lost" if self.is_won is False else "pending")
+        return f"<PredictionLog({self.home_team} vs {self.away_team}, tip={self.prediction}, {status})>"
 

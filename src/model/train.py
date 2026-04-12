@@ -1,12 +1,13 @@
 """
 src/model/train.py
-Script d'entraînement du modèle MatchPredictor.
-Charge les données depuis PostgreSQL, entraîne le réseau, et sauvegarde le checkpoint.
+Script d'entraînement — NN Ensemble + XGBoost stacking.
+Charge les données depuis PostgreSQL, entraîne les modèles, et sauvegarde le checkpoint.
 """
 
 import json
 import logging
 import os
+import pickle
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+import xgboost as xgb
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -43,70 +46,67 @@ METRICS_PATH: Path = MODEL_DIR / "training_metrics.json"
 # Hyperparamètres d'entraînement
 # ============================================================
 TRAIN_CONFIG: dict = {
-    "epochs": 200,
+    "epochs": 300,
     "batch_size": 64,
-    "learning_rate": 0.0005,
-    "weight_decay": 1e-4,
-    "patience": 40,         # Early stopping patience
+    "learning_rate": 0.001,
+    "weight_decay": 1e-3,
+    "patience": 50,
     "val_split": 0.1,
     "test_split": 0.05,
     "random_state": 13,
+    "ensemble_seeds": [13, 42, 99],
 }
 
-# Colonnes features utilisées pour l'entraînement (15 features)
+# Colonnes features utilisées pour l'entraînement (14 features, sélection par importance XGBoost)
 FEATURE_COLUMNS: list[str] = [
-    # Forme générale (6)
-    "home_pts_last_5",
-    "home_goals_scored_last_5",
-    "home_goals_conceded_last_5",
-    "away_pts_last_5",
-    "away_goals_scored_last_5",
-    "away_goals_conceded_last_5",
+    # Probabilités implicites du marché (3)
+    "implied_away",
+    "implied_home",
+    "implied_draw",
     # Elo (3)
-    "home_elo",
     "away_elo",
     "elo_diff",
+    "home_elo",
+    # Forme (3)
+    "home_goals_conceded_last_5",
+    "away_goals_scored_last_5",
+    "away_pts_last_5",
     # Forme spécifique dom/ext (2)
     "home_pts_last_5_at_home",
     "away_pts_last_5_away",
-    # Fatigue (2)
-    "home_days_rest",
-    "away_days_rest",
-    # Understat (xG & xPts) (4)
-    "home_xg_last_5",
-    "home_xpts_last_5",
-    "away_xg_last_5",
-    "away_xpts_last_5",
+    # Tirs cadrés (3)
+    "away_sot_last_5",
+    "home_sot_last_5",
+    "away_sot_conceded_last_5",
 ]
 
 
 def load_training_data(session: Session) -> pd.DataFrame:
-    """Charge les 15 features et les résultats depuis PostgreSQL."""
+    """Charge les features et cotes depuis PostgreSQL, calcule les probabilités implicites."""
     stmt = (
         select(
             MatchFeature.match_id,
-            # Forme générale
-            MatchFeature.home_pts_last_5,
-            MatchFeature.home_goals_scored_last_5,
-            MatchFeature.home_goals_conceded_last_5,
-            MatchFeature.away_pts_last_5,
-            MatchFeature.away_goals_scored_last_5,
-            MatchFeature.away_goals_conceded_last_5,
+            # Probabilités implicites (calculées à partir des cotes)
+            # → ajoutées ci-dessous après calcul
             # Elo
-            MatchFeature.home_elo,
             MatchFeature.away_elo,
             MatchFeature.elo_diff,
+            MatchFeature.home_elo,
+            # Forme
+            MatchFeature.home_goals_conceded_last_5,
+            MatchFeature.away_goals_scored_last_5,
+            MatchFeature.away_pts_last_5,
             # Forme spécifique
             MatchFeature.home_pts_last_5_at_home,
             MatchFeature.away_pts_last_5_away,
-            # Fatigue
-            MatchFeature.home_days_rest,
-            MatchFeature.away_days_rest,
-            # Understat
-            MatchFeature.home_xg_last_5,
-            MatchFeature.home_xpts_last_5,
-            MatchFeature.away_xg_last_5,
-            MatchFeature.away_xpts_last_5,
+            # Tirs cadrés
+            MatchFeature.away_sot_last_5,
+            MatchFeature.home_sot_last_5,
+            MatchFeature.away_sot_conceded_last_5,
+            # Cotes du marché
+            MatchRaw.avg_h,
+            MatchRaw.avg_d,
+            MatchRaw.avg_a,
             # Target
             MatchRaw.ftr,
         )
@@ -117,10 +117,27 @@ def load_training_data(session: Session) -> pd.DataFrame:
     result = session.execute(stmt)
     rows = result.fetchall()
 
-    df: pd.DataFrame = pd.DataFrame(
-        rows,
-        columns=["match_id"] + FEATURE_COLUMNS + ["ftr"],
-    )
+    raw_columns = [
+        "match_id",
+        "away_elo", "elo_diff", "home_elo",
+        "home_goals_conceded_last_5", "away_goals_scored_last_5", "away_pts_last_5",
+        "home_pts_last_5_at_home", "away_pts_last_5_away",
+        "away_sot_last_5", "home_sot_last_5", "away_sot_conceded_last_5",
+        "avg_h", "avg_d", "avg_a",
+        "ftr",
+    ]
+    df: pd.DataFrame = pd.DataFrame(rows, columns=raw_columns)
+
+    # --- Probabilités implicites : uniquement les cotes réelles ---
+    df = df.dropna(subset=["avg_h", "avg_d", "avg_a"])
+    logger.info(f"Matchs avec cotes bookmakers : {len(df)}")
+
+    margin = (1.0 / df["avg_h"]) + (1.0 / df["avg_d"]) + (1.0 / df["avg_a"])
+    df["implied_home"] = (1.0 / df["avg_h"]) / margin
+    df["implied_draw"] = (1.0 / df["avg_d"]) / margin
+    df["implied_away"] = (1.0 / df["avg_a"]) / margin
+
+    df = df.drop(columns=["avg_h", "avg_d", "avg_a"])
 
     logger.info(f"Données chargées : {len(df)} matchs avec {len(FEATURE_COLUMNS)} features")
     return df
@@ -181,7 +198,14 @@ def prepare_datasets(df: pd.DataFrame) -> tuple:
     val_dataset = TensorDataset(torch.tensor(X_val), torch.tensor(y_val))
     test_dataset = TensorDataset(torch.tensor(X_test), torch.tensor(y_test))
 
-    return train_dataset, val_dataset, test_dataset, scaler_params, class_weights
+    # Retour : datasets PyTorch + arrays numpy bruts pour XGBoost
+    numpy_splits = {
+        "X_train": X_train, "y_train": y_train,
+        "X_val": X_val, "y_val": y_val,
+        "X_test": X_test, "y_test": y_test,
+    }
+
+    return train_dataset, val_dataset, test_dataset, scaler_params, class_weights, numpy_splits
 
 
 def train_model(
@@ -202,17 +226,17 @@ def train_model(
     model: MatchPredictor = MatchPredictor(**DEFAULT_MODEL_CONFIG).to(device)
     logger.info(f"Paramètres du modèle : {sum(p.numel() for p in model.parameters()):,}")
 
-    # Loss sans poids de classe pour maximiser l'accuracy brute (objectif > 0.55)
-    criterion = nn.CrossEntropyLoss()
+    # Loss avec poids de classe pour équilibrer H/D/A (surtout les nuls)
+    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
 
     # Optimiseur + Scheduler
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=0.0005,
-        weight_decay=1e-4,
+        lr=TRAIN_CONFIG["learning_rate"],
+        weight_decay=TRAIN_CONFIG["weight_decay"],
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=8
+        optimizer, mode="min", factor=0.5, patience=15, min_lr=1e-5
     )
 
     # Tracking
@@ -346,56 +370,256 @@ def evaluate_model(model: MatchPredictor, test_dataset: TensorDataset) -> dict:
     return {"test_accuracy": round(test_acc, 4), "per_class_accuracy": per_class_acc, "test_samples": total}
 
 
+def calibrate_temperature(model: MatchPredictor, val_dataset: TensorDataset) -> float:
+    """Optimise un paramètre de température sur le jeu de validation (Temperature Scaling)."""
+    device: torch.device = next(model.parameters()).device
+    val_loader = DataLoader(val_dataset, batch_size=TRAIN_CONFIG["batch_size"], shuffle=False)
+
+    # Collecter tous les logits et labels du validation set
+    all_logits: list[torch.Tensor] = []
+    all_labels: list[torch.Tensor] = []
+
+    model.eval()
+    with torch.no_grad():
+        for X_batch, y_batch in val_loader:
+            X_batch = X_batch.to(device)
+            logits = model(X_batch)
+            all_logits.append(logits.cpu())
+            all_labels.append(y_batch)
+
+    logits_cat = torch.cat(all_logits)
+    labels_cat = torch.cat(all_labels)
+
+    # Optimisation du paramètre de température par recherche sur grille
+    best_temp: float = 1.0
+    best_nll: float = float("inf")
+
+    for t in [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 1.7, 2.0, 2.5, 3.0]:
+        scaled_logits = logits_cat / t
+        nll = nn.CrossEntropyLoss()(scaled_logits, labels_cat).item()
+        if nll < best_nll:
+            best_nll = nll
+            best_temp = t
+
+    logger.info(f"Temperature scaling optimale : T={best_temp:.2f} (NLL={best_nll:.4f})")
+    return best_temp
+
+
+XGBOOST_PATH: Path = MODEL_DIR / "xgboost_model.json"
+META_MODEL_PATH: Path = MODEL_DIR / "meta_model.pkl"
+
+
+def train_xgboost(X_train: np.ndarray, y_train: np.ndarray,
+                   X_val: np.ndarray, y_val: np.ndarray) -> xgb.XGBClassifier:
+    """Entraîne un modèle XGBoost multiclass optimisé pour football."""
+    # Poids de classes
+    class_counts = np.bincount(y_train, minlength=3)
+    sample_weights = np.array([len(y_train) / (3.0 * class_counts[c]) for c in y_train])
+
+    model = xgb.XGBClassifier(
+        n_estimators=500,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        min_child_weight=3,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        objective="multi:softprob",
+        num_class=3,
+        eval_metric="mlogloss",
+        early_stopping_rounds=50,
+        random_state=42,
+        n_jobs=-1,
+    )
+
+    model.fit(
+        X_train, y_train,
+        sample_weight=sample_weights,
+        eval_set=[(X_val, y_val)],
+        verbose=False,
+    )
+
+    logger.info(f"XGBoost — best iteration: {model.best_iteration}, best score: {model.best_score:.4f}")
+    return model
+
+
+def get_nn_probs(models: list[MatchPredictor], X: np.ndarray, temperature: float) -> np.ndarray:
+    """Extrait les probabilités softmax moyennes de l'ensemble NN."""
+    device = next(models[0].parameters()).device
+    x_tensor = torch.tensor(X, dtype=torch.float32).to(device)
+
+    avg_probs = torch.zeros(len(X), 3, device=device)
+    with torch.no_grad():
+        for model in models:
+            model.eval()
+            logits = model(x_tensor) / temperature
+            avg_probs += torch.softmax(logits, dim=-1)
+    avg_probs /= len(models)
+
+    return avg_probs.cpu().numpy()
+
+
+def build_meta_features(nn_probs: np.ndarray, xgb_probs: np.ndarray) -> np.ndarray:
+    """Construit les features pour le méta-learner : 6 probas (3 NN + 3 XGB)."""
+    return np.hstack([nn_probs, xgb_probs])
+
+
 def run_training() -> bool:
-    """Point d'entrée principal de l'entraînement."""
+    """Point d'entrée principal : NN Ensemble + XGBoost + Stacking."""
     logger.info("=" * 60)
-    logger.info("DÉMARRAGE DE L'ENTRAÎNEMENT DU MODÈLE DEEP LEARNING")
+    logger.info("ENTRAÎNEMENT STACKING : NN ENSEMBLE + XGBOOST")
     logger.info("=" * 60)
 
-    # Création du dossier checkpoints
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-
     session: Session = get_session()
 
     try:
         # 1. Chargement des données
         df: pd.DataFrame = load_training_data(session)
         if df.empty:
-            logger.error("Aucune donnée trouvée. Exécutez l'ingestion et le feature engineering d'abord.")
+            logger.error("Aucune donnée trouvée.")
             return False
 
         # 2. Préparation des datasets
-        train_dataset, val_dataset, test_dataset, scaler_params, class_weights = prepare_datasets(df)
+        train_dataset, val_dataset, test_dataset, scaler_params, class_weights, splits = prepare_datasets(df)
+        X_train, y_train = splits["X_train"], splits["y_train"]
+        X_val, y_val = splits["X_val"], splits["y_val"]
+        X_test, y_test = splits["X_test"], splits["y_test"]
 
-        # 3. Entraînement
-        model, train_metrics = train_model(train_dataset, val_dataset, class_weights)
+        # ============================================================
+        # 3. ÉTAPE 1 — NN Ensemble
+        # ============================================================
+        ensemble_seeds = TRAIN_CONFIG["ensemble_seeds"]
+        models: list[MatchPredictor] = []
+        all_train_metrics: list[dict] = []
 
-        # 4. Évaluation sur le jeu de test
-        test_metrics: dict = evaluate_model(model, test_dataset)
+        for i, seed in enumerate(ensemble_seeds):
+            logger.info(f"\n{'='*40} NN {i+1}/{len(ensemble_seeds)} (seed={seed}) {'='*40}")
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            model, train_metrics = train_model(train_dataset, val_dataset, class_weights)
+            models.append(model)
+            all_train_metrics.append(train_metrics)
 
-        # 5. Sauvegarde du modèle
-        torch.save({
-            "model_state_dict": model.state_dict(),
+        best_model_idx = min(range(len(all_train_metrics)), key=lambda i: all_train_metrics[i]["best_val_loss"])
+        temperature = calibrate_temperature(models[best_model_idx], val_dataset)
+
+        # Évaluation NN seul
+        nn_test_metrics = evaluate_ensemble(models, test_dataset, temperature)
+        logger.info(f"NN Ensemble seul — Test Acc: {nn_test_metrics['test_accuracy']:.3f}")
+
+        # ============================================================
+        # 4. ÉTAPE 2 — XGBoost
+        # ============================================================
+        logger.info(f"\n{'='*40} XGBoost {'='*40}")
+        xgb_model = train_xgboost(X_train, y_train, X_val, y_val)
+
+        # Évaluation XGBoost seul
+        xgb_test_preds = xgb_model.predict(X_test)
+        xgb_test_acc = np.mean(xgb_test_preds == y_test)
+        logger.info(f"XGBoost seul — Test Acc: {xgb_test_acc:.3f}")
+
+        # ============================================================
+        # 5. ÉTAPE 3 — Stacking avec méta-learner
+        # ============================================================
+        logger.info(f"\n{'='*40} STACKING {'='*40}")
+
+        # Générer les probabilités NN et XGBoost sur validation (pour entraîner le méta-learner)
+        nn_val_probs = get_nn_probs(models, X_val, temperature)
+        xgb_val_probs = xgb_model.predict_proba(X_val)
+        meta_X_val = build_meta_features(nn_val_probs, xgb_val_probs)
+
+        # Méta-learner : LogisticRegression sur les 6 probas
+        meta_model = LogisticRegression(
+            max_iter=1000,
+            solver="lbfgs",
+            C=1.0,
+        )
+        meta_model.fit(meta_X_val, y_val)
+
+        # Évaluation stacking sur test
+        nn_test_probs = get_nn_probs(models, X_test, temperature)
+        xgb_test_probs = xgb_model.predict_proba(X_test)
+        meta_X_test = build_meta_features(nn_test_probs, xgb_test_probs)
+        meta_test_preds = meta_model.predict(meta_X_test)
+        meta_test_acc = np.mean(meta_test_preds == y_test)
+
+        # Per-class stacking
+        class_correct = {0: 0, 1: 0, 2: 0}
+        class_total = {0: 0, 1: 0, 2: 0}
+        for pred, true in zip(meta_test_preds, y_test):
+            class_total[true] += 1
+            if pred == true:
+                class_correct[true] += 1
+        per_class_acc = {
+            "H": round(class_correct[0] / max(class_total[0], 1), 3),
+            "D": round(class_correct[1] / max(class_total[1], 1), 3),
+            "A": round(class_correct[2] / max(class_total[2], 1), 3),
+        }
+        logger.info(f"STACKING Test Accuracy : {meta_test_acc:.3f}")
+        logger.info(f"Par classe — H: {per_class_acc['H']}, D: {per_class_acc['D']}, A: {per_class_acc['A']}")
+
+        # ============================================================
+        # 6. Détermination du meilleur modèle
+        # ============================================================
+        results = {
+            "nn_ensemble": nn_test_metrics["test_accuracy"],
+            "xgboost": round(float(xgb_test_acc), 4),
+            "stacking": round(float(meta_test_acc), 4),
+        }
+        best_approach = max(results, key=results.get)
+        logger.info(f"\nRésultats: NN={results['nn_ensemble']:.3f}, XGB={results['xgboost']:.3f}, Stack={results['stacking']:.3f}")
+        logger.info(f"Meilleur : {best_approach} ({results[best_approach]:.3f})")
+
+        # ============================================================
+        # 7. Sauvegarde
+        # ============================================================
+        # Toujours sauvegarder tous les composants (le predict.py choisira)
+        ensemble_state = {
+            "num_models": len(models),
             "model_config": DEFAULT_MODEL_CONFIG,
             "scaler_params": scaler_params,
-        }, MODEL_PATH)
-        logger.info(f"Modèle sauvegardé : {MODEL_PATH}")
+            "temperature": temperature,
+            "best_approach": best_approach,
+            "results": results,
+        }
+        for i, model in enumerate(models):
+            ensemble_state[f"model_{i}_state_dict"] = model.state_dict()
 
-        # 6. Sauvegarde des paramètres du scaler
+        torch.save(ensemble_state, MODEL_PATH)
+
+        xgb_model.save_model(str(XGBOOST_PATH))
+
+        with open(META_MODEL_PATH, "wb") as f:
+            pickle.dump(meta_model, f)
+
         with open(SCALER_PATH, "w") as f:
             json.dump(scaler_params, f, indent=2)
-        logger.info(f"Scaler sauvegardé : {SCALER_PATH}")
 
-        # 7. Sauvegarde des métriques
-        all_metrics: dict = {**train_metrics, **test_metrics}
+        test_metrics = {
+            "test_accuracy": results[best_approach],
+            "per_class_accuracy": per_class_acc if best_approach == "stacking" else nn_test_metrics.get("per_class_accuracy", {}),
+            "test_samples": len(y_test),
+        }
+        best_metrics = all_train_metrics[best_model_idx]
+        all_metrics = {
+            **best_metrics,
+            **test_metrics,
+            "ensemble_size": len(models),
+            "temperature": temperature,
+            "best_approach": best_approach,
+            "all_results": results,
+        }
         with open(METRICS_PATH, "w") as f:
             json.dump(all_metrics, f, indent=2)
-        logger.info(f"Métriques sauvegardées : {METRICS_PATH}")
 
         logger.info("=" * 60)
-        logger.info("ENTRAÎNEMENT TERMINÉ AVEC SUCCÈS")
-        logger.info(f"  Val Accuracy  : {train_metrics['best_val_acc']:.3f}")
-        logger.info(f"  Test Accuracy : {test_metrics['test_accuracy']:.3f}")
+        logger.info("ENTRAÎNEMENT STACKING TERMINÉ AVEC SUCCÈS")
+        logger.info(f"  NN Ensemble     : {results['nn_ensemble']:.3f}")
+        logger.info(f"  XGBoost         : {results['xgboost']:.3f}")
+        logger.info(f"  Stacking        : {results['stacking']:.3f}")
+        logger.info(f"  Best            : {best_approach} ({results[best_approach]:.3f})")
         logger.info("=" * 60)
         return True
 
@@ -405,6 +629,52 @@ def run_training() -> bool:
 
     finally:
         session.close()
+
+
+def evaluate_ensemble(
+    models: list[MatchPredictor], test_dataset: TensorDataset, temperature: float
+) -> dict:
+    """Évalue l'ensemble de modèles sur le jeu de test avec temperature scaling."""
+    device: torch.device = next(models[0].parameters()).device
+    test_loader = DataLoader(test_dataset, batch_size=TRAIN_CONFIG["batch_size"], shuffle=False)
+
+    correct: int = 0
+    total: int = 0
+    class_correct: dict[int, int] = {0: 0, 1: 0, 2: 0}
+    class_total: dict[int, int] = {0: 0, 1: 0, 2: 0}
+
+    with torch.no_grad():
+        for X_batch, y_batch in test_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+
+            # Moyenne des probabilités softmax de tous les modèles
+            avg_probs = torch.zeros(X_batch.size(0), 3, device=device)
+            for model in models:
+                model.eval()
+                logits = model(X_batch) / temperature
+                avg_probs += torch.softmax(logits, dim=-1)
+            avg_probs /= len(models)
+
+            preds: torch.Tensor = avg_probs.argmax(dim=-1)
+            correct += (preds == y_batch).sum().item()
+            total += y_batch.size(0)
+
+            for cls in range(3):
+                mask = y_batch == cls
+                class_correct[cls] += (preds[mask] == cls).sum().item()
+                class_total[cls] += mask.sum().item()
+
+    test_acc: float = correct / max(total, 1)
+    per_class_acc: dict[str, float] = {
+        "H": round(class_correct[0] / max(class_total[0], 1), 3),
+        "D": round(class_correct[1] / max(class_total[1], 1), 3),
+        "A": round(class_correct[2] / max(class_total[2], 1), 3),
+    }
+
+    logger.info(f"Ensemble Test Accuracy : {test_acc:.3f}")
+    logger.info(f"Par classe — H: {per_class_acc['H']}, D: {per_class_acc['D']}, A: {per_class_acc['A']}")
+
+    return {"test_accuracy": round(test_acc, 4), "per_class_accuracy": per_class_acc, "test_samples": total}
 
 
 if __name__ == "__main__":

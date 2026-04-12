@@ -39,6 +39,7 @@ async def fetch_and_update(session: aiohttp.ClientSession, db_session: Session, 
     # Pré-fetch du dictionnaire de teams pour cette ligue (pour accélérer)
     stmt_teams = select(Team.id, Team.name).where(Team.league == league_fd)
     teams = {r.name: r.id for r in db_session.execute(stmt_teams).fetchall()}
+    logger.info(f"Teams en DB pour {league_fd} : {len(teams)} ({list(teams.keys())[:5]}...)")
 
     updated_count = 0
     not_found_count = 0
@@ -66,7 +67,8 @@ async def fetch_and_update(session: aiohttp.ClientSession, db_session: Session, 
 
             if not home_id:
                 not_found_count += 1
-                logger.debug(f"Equipe {home_fd} introuvable en DB.")
+                if not_found_count <= 3:
+                    logger.warning(f"Equipe '{home_u}' -> '{home_fd}' introuvable en DB.")
                 continue
 
             # Approche Date : on cherche dans une fenêtre de ± 24h
@@ -108,10 +110,10 @@ async def main():
     logger.info("Démarrage du processus Load Understat")
     
     # Understat ids: 'ligue_1', 'epl'
-    # Notre DB: 'F1', 'E0'
+    # Notre DB: 'Premier League', 'Ligue 1'
     tasks_cfg = [
-        ("epl", "E0"),
-        ("ligue_1", "F1")
+        ("epl", "Premier League"),
+        ("ligue_1", "Ligue 1"),
     ]
     
     db_session = get_session()

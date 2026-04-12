@@ -23,18 +23,21 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 # ============================================================
 # Configuration des ligues et saisons
 # ============================================================
-LEAGUES: list[str] = ["F1", "E0"]  # F1 = Ligue 1, E0 = Premier League
+LEAGUES: list[str] = ["F1", "E0", "D1", "SP1", "I1"]  # F1=Ligue1, E0=PL, D1=Bundesliga, SP1=LaLiga, I1=SerieA
 
 LEAGUE_NAMES: dict[str, str] = {
     "F1": "Ligue 1",
     "E0": "Premier League",
+    "D1": "Bundesliga",
+    "SP1": "La Liga",
+    "I1": "Serie A",
 }
 
-# Saisons de 2010-2011 à 2023-2024
+# Saisons de 2010-2011 à 2024-2025
 SEASONS: list[str] = [
     "1011", "1112", "1213", "1314", "1415",
     "1516", "1617", "1718", "1819", "1920",
-    "2021", "2122", "2223", "2324",
+    "2021", "2122", "2223", "2324", "2425",
 ]
 
 BASE_URL: str = "https://www.football-data.co.uk/mmz4281/{season}/{league}.csv"
