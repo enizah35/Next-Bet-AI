@@ -1,12 +1,21 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { createClient } from '@/utils/supabase/client';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createClient, isSupabaseConfigured } from '@/utils/supabase/client';
 import { User } from '@supabase/supabase-js';
+
+type UserProfile = {
+  id: string;
+  full_name?: string | null;
+  subscription_tier?: string | null;
+  billing_cycle?: string | null;
+  is_trial_used?: boolean | null;
+  updated_at?: string | null;
+};
 
 interface AuthContextType {
   user: User | null;
-  profile: any | null;
+  profile: UserProfile | null;
   loading: boolean;
   refreshProfile: () => Promise<void>;
 }
@@ -20,12 +29,14 @@ const AuthContext = createContext<AuthContextType>({
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<any | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const supabase = createClient();
 
-  const fetchProfile = async (userId: string) => {
+  const fetchProfile = useCallback(async (userId: string) => {
+    if (!isSupabaseConfigured) return;
+
     try {
+      const supabase = createClient();
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -38,7 +49,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     } catch (err) {
       console.error("AuthContext: Error fetching profile:", err);
     }
-  };
+  }, []);
 
   const refreshProfile = async () => {
     if (user) {
@@ -47,6 +58,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setUser(null);
+      setProfile(null);
+      setLoading(false);
+      return;
+    }
+
+    const supabase = createClient();
+
     const initAuth = async () => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
@@ -84,7 +104,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     return () => {
       subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [fetchProfile]);
 
   return (
     <AuthContext.Provider value={{ user, profile, loading, refreshProfile }}>
