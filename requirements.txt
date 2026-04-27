@@ -25,11 +25,17 @@ stripe
 httpx
 requests
 understat
-aiohttp
+aiohttp>=3.13.0
 
 # --- Deep Learning ---
 torch
 torchvision
+transformers>=4.40       # BERT multilingue pour l'analyse de sentiment des news
+sentencepiece            # tokenizer pour les modèles multilingues
+
+# --- Machine Learning ---
+xgboost>=2.0
+lightgbm>=4.0
 
 # --- Utilitaires ---
 python-dotenv

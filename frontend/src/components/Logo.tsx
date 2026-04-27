@@ -12,10 +12,10 @@ interface LogoProps {
 }
 
 const Logo: React.FC<LogoProps> = ({ width = 220, height = 55, className }) => {
-  const { theme } = useTheme();
+  const { mode: theme } = useTheme();
 
   // Determine which logo to show with cache busting version
-  const logoSrc = theme === "dark" 
+  const logoSrc = theme === "dark"
     ? "/assets/logo_dark.png?v=2" 
     : "/assets/logo_clear.png?v=2";
 

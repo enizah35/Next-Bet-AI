@@ -70,9 +70,9 @@ class MatchPredictor(nn.Module):
 # Config par défaut du modèle
 # ============================================================
 DEFAULT_MODEL_CONFIG: dict = {
-    "input_dim": 14,
-    "hidden_dim": 64,
-    "num_residual_blocks": 2,
+    "input_dim": 40,
+    "hidden_dim": 128,
+    "num_residual_blocks": 3,
     "dropout": 0.3,
     "num_classes": 3,
 }

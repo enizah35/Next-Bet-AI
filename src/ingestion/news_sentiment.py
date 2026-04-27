@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import feedparser
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +172,9 @@ def fetch_rss_entries(league: str, max_entries: int = 30) -> list[dict]:
 
     for source in sources:
         try:
-            feed = feedparser.parse(source["url"])
+            response = requests.get(source["url"], timeout=3)
+            response.raise_for_status()
+            feed = feedparser.parse(response.content)
             for entry in feed.entries[:max_entries]:
                 all_entries.append({
                     "title": entry.get("title", ""),

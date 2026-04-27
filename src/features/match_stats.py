@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from src.database.database import get_session
 from src.database.models import Team, MatchRaw
+from src.features.team_resolver import resolve_team_map
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,7 @@ def predict_match_stats(
     home_team: str,
     away_team: str,
     session: Optional[Session] = None,
+    league: str = "",
 ) -> dict:
     """
     Prédit les statistiques d'un match basé sur les moyennes historiques.
@@ -174,9 +176,7 @@ def predict_match_stats(
 
     try:
         # Récupérer les IDs
-        stmt = select(Team.id, Team.name).where(Team.name.in_([home_team, away_team]))
-        team_rows = session.execute(stmt).fetchall()
-        team_map = {r.name: r.id for r in team_rows}
+        team_map = resolve_team_map(session, [home_team, away_team], league=league)
 
         home_id = team_map.get(home_team)
         away_id = team_map.get(away_team)

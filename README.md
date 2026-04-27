@@ -98,136 +98,102 @@ next-bet-ai/
 
 ## Installation & Lancement
 
+## 🚀 Démarrage Rapide (Installation & Lancement)
+
+Le projet est divisé en deux parties : un backend (API FastAPI Python) et un frontend (Next.js App Router). **Il est fortement conseillé de lancer le backend avant le frontend**, car le frontend utilise les React Server Components (RSC) qui fetch les données de l'API au moment du build ou à la navigation.
+
 ### Prérequis
+- **Python 3.11+**
+- **Node.js 18+**
+- **Base de données PostgreSQL** (Local ou hébergée via Supabase)
 
-- **Python** 3.11+
-- **Node.js** 18+
-- **PostgreSQL** (ou un projet Supabase)
+---
 
-### 1. Cloner le repo
+### 1. Cloner le Projet
 
 ```bash
-git clone https://github.com/<votre-user>/next-bet-ai.git
+git clone https://github.com/votre-user/next-bet-ai.git
 cd next-bet-ai
 ```
 
-### 2. Backend (FastAPI)
+---
+
+### 2. Démarrer le Backend (API Python)
+
+Le backend gère l'Intelligence Artificielle, l'ORM et les Webhooks de paiement.
 
 ```bash
-# Créer un environnement virtuel
+# 1. Créer un environnement virtuel
 python -m venv .venv
 
-# Activer (Windows)
+# 2. Activer l'environnement
+# Sous Windows :
 .venv\Scripts\Activate.ps1
-# Activer (macOS/Linux)
+# Sous macOS / Linux :
 source .venv/bin/activate
 
-# Installer les dépendances
+# 3. Installer les dépendances
 pip install -r requirements.txt
-# Pour PyTorch CPU uniquement :
-pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
-```
+# (Pour Windows / PyTorch CPU léger : pip install torch --extra-index-url https://download.pytorch.org/whl/cpu)
 
-### 3. Variables d'environnement
+# 4. Configurer les variables d'environnement (.env à la racine)
+# DB_URL=postgresql://user:password@host:5432/nextbet
+# STRIPE_SECRET_KEY=sk_test_...
 
-Créer un fichier `.env` à la racine :
-
-```env
-# Base de données PostgreSQL
-DB_URL=postgresql://user:password@host:5432/nextbet
-
-# Stripe
-STRIPE_SECRET_KEY=sk_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_PRICE_LIGUE1_MONTHLY=price_...
-STRIPE_PRICE_LIGUE1_YEARLY=price_...
-STRIPE_PRICE_PL_MONTHLY=price_...
-STRIPE_PRICE_PL_YEARLY=price_...
-STRIPE_PRICE_ULTIMATE_MONTHLY=price_...
-STRIPE_PRICE_ULTIMATE_YEARLY=price_...
-
-# APIs externes
-FOOTBALL_DATA_API_KEY=...
-ODDS_API_KEY=...
-
-# URL du frontend
-NEXT_PUBLIC_SITE_URL=http://localhost:3000
-```
-
-### 4. Initialiser la base de données
-
-```bash
-# Créer les tables
-python -c "from src.database.database import init_db; init_db()"
-
-# Seed des équipes (183 équipes, 5 ligues)
-python -m src.database.seed_teams
-
-# Charger les données historiques
-python -m src.ingestion.load_historical
-
-# Construire les features
-python -m src.features.build_features
-```
-
-### 5. Entraîner le modèle
-
-```bash
-python -m src.model.train
-```
-
-Le checkpoint est sauvegardé dans `src/model/checkpoints/`.
-
-### 6. Lancer le backend
-
-```bash
+# 5. Démarrer le serveur API
 uvicorn src.api.main:app --reload --port 8000
 ```
+L'API tourne maintenant sur [http://localhost:8000](http://localhost:8000). Vous pouvez explorer les routes via la documentation intégrée sur `http://localhost:8000/docs`.
 
-L'API est accessible sur `http://localhost:8000` (docs Swagger : `/docs`).
+---
 
-### 7. Frontend (Next.js)
+### 3. Démarrer le Frontend (Next.js)
+
+Le frontend est construit sous Next.js (App Router) et optimise les chargements via un rendu côté serveur.
 
 ```bash
+# 1. Ouvrir un second terminal et aller dans /frontend
 cd frontend
 
-# Installer les dépendances
+# 2. Installer les paquets
 npm install
 
-# Créer frontend/.env.local
+# 3. Configurer les variables d'environnement (frontend/.env.local)
 # NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 # NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=eyJ...
-# NEXT_PUBLIC_API_URL=http://localhost:8000
+# NEXT_PUBLIC_API_URL=http://localhost:8000    <-- Doit pointer sur le Backend lancé !
 
-# Lancer le dev server
+# 4. Lancer le serveur de développement
 npm run dev
-```
 
-Le frontend est accessible sur `http://localhost:3000`.
+# (Optionnel) Pour tester le build de production :
+# L'API locale doit être allumée car Next.js pré-compile les Server Components
+npm run build && npm run start
+```
+L'application Web est désormais accessible sur [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## Docker
+## 🛠️ Scripts Annexes (Initialisation & Modèle)
+
+Si vous installez le projet à partir de zéro, vous devrez initialiser la base de données et entraîner le modèle :
 
 ```bash
-# Build
-docker build -t next-bet-ai .
+# S'assurer d'être à la racine avec .venv activé
 
-# Run
-docker run -p 7860:7860 --env-file .env next-bet-ai
+# 1. Créer les tables SQL
+python -c "from src.database.database import init_db; init_db()"
+
+# 2. Insérer les 183 équipes (5 Ligues)
+python -m src.database.seed_teams
+
+# 3. Charger les historiques de matchs et Data AI
+python -m src.ingestion.load_historical
+python -m src.features.build_features
+
+# 4. Entraîner le XGBoost
+python -m src.model.train
 ```
-
----
-
-## Scripts utilitaires
-
-| Script | Commande | Description |
-|---|---|---|
-| Analyse DB | `python -m scripts.check_db` | Vérifier l'état de la base |
-| Analyse data | `python -m scripts.analyze_data` | Stats sur les matchs/odds |
-| Feature importance | `python -m scripts.analyze_importance` | Classement des features |
-| Expérimentations | `python -m scripts.experiment_models` | Comparaison XGBoost / LightGBM |
-| Test inférence | `python -m scripts.test_inference` | Tester le modèle en local |
 
 ---
 
@@ -238,3 +204,4 @@ docker run -p 7860:7860 --env-file .env next-bet-ai
 - 🇩🇪 Bundesliga (D1)
 - 🇪🇸 La Liga (SP1)
 - 🇮🇹 Serie A (I1)
+

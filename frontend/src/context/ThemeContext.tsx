@@ -2,48 +2,53 @@
 
 import React, { createContext, useContext, useEffect, useState } from "react";
 
-type Theme = "dark" | "light";
+type Mode = "dark" | "light";
+type Dir = "safe" | "bold";
 
 interface ThemeContextType {
-  theme: Theme;
-  toggleTheme: () => void;
+  mode: Mode;
+  dir: Dir;
+  toggleMode: () => void;
+  setDir: (d: Dir) => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [theme, setTheme] = useState<Theme>("dark"); // Default to dark initially
-  const [mounted, setMounted] = useState(false);
+  const [mode, setMode] = useState<Mode>("dark");
+  const [dir, setDirState] = useState<Dir>("safe");
 
   useEffect(() => {
-    // Check localStorage OR system preference on mount
-    const savedTheme = localStorage.getItem("theme") as Theme;
-    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    
-    const initialTheme = savedTheme || systemTheme;
-    setTheme(initialTheme);
-    document.documentElement.setAttribute("data-theme", initialTheme);
-    setMounted(true);
+    const savedMode = (localStorage.getItem("nba_mode") as Mode) || "dark";
+    const savedDir = (localStorage.getItem("nba_dir") as Dir) || "safe";
+    setMode(savedMode);
+    setDirState(savedDir);
+    document.documentElement.setAttribute("data-mode", savedMode);
+    document.documentElement.setAttribute("data-dir", savedDir);
   }, []);
 
-  const toggleTheme = () => {
-    const newTheme = theme === "dark" ? "light" : "dark";
-    setTheme(newTheme);
-    localStorage.setItem("theme", newTheme);
-    document.documentElement.setAttribute("data-theme", newTheme);
+  const toggleMode = () => {
+    const next: Mode = mode === "dark" ? "light" : "dark";
+    setMode(next);
+    localStorage.setItem("nba_mode", next);
+    document.documentElement.setAttribute("data-mode", next);
+  };
+
+  const setDir = (d: Dir) => {
+    setDirState(d);
+    localStorage.setItem("nba_dir", d);
+    document.documentElement.setAttribute("data-dir", d);
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+    <ThemeContext.Provider value={{ mode, dir, toggleMode, setDir }}>
       {children}
     </ThemeContext.Provider>
   );
 };
 
 export const useTheme = () => {
-  const context = useContext(ThemeContext);
-  if (!context) {
-    throw new Error("useTheme must be used within a ThemeProvider");
-  }
-  return context;
+  const ctx = useContext(ThemeContext);
+  if (!ctx) throw new Error("useTheme must be used within ThemeProvider");
+  return ctx;
 };

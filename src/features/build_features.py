@@ -190,12 +190,12 @@ def compute_team_general_form(df: pd.DataFrame, team_id: int) -> pd.DataFrame:
         mean_xg = team_df["xg"].mean()
         # Fallback supplémentaire (1.1 est environ la moyenne globale d'un match de foot)
         if pd.isna(mean_xg): mean_xg = 1.1 
-        team_df["xg"].fillna(mean_xg, inplace=True)
+        team_df["xg"] = team_df["xg"].fillna(mean_xg)
         
     if team_df["xpts"].isnull().any():
         mean_xpts = team_df["xpts"].mean()
         if pd.isna(mean_xpts): mean_xpts = 1.1
-        team_df["xpts"].fillna(mean_xpts, inplace=True)
+        team_df["xpts"] = team_df["xpts"].fillna(mean_xpts)
 
     # Rolling avec .shift(1)
     for col, out_col in [

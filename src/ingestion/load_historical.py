@@ -5,12 +5,15 @@ Télécharge les CSV, nettoie les colonnes, peuple teams puis matches_raw.
 """
 
 import logging
+import time
 from io import StringIO
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 import requests
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -23,7 +26,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 # ============================================================
 # Configuration des ligues et saisons
 # ============================================================
-LEAGUES: list[str] = ["F1", "E0", "D1", "SP1", "I1"]  # F1=Ligue1, E0=PL, D1=Bundesliga, SP1=LaLiga, I1=SerieA
+LEAGUES: list[str] = [
+    "F1",   # Ligue 1
+    "E0",   # Premier League
+    "D1",   # Bundesliga
+    "SP1",  # La Liga
+    "I1",   # Serie A
+    "E1",   # Championship (D2 anglaise — volume ++, style proche PL)
+    "F2",   # Ligue 2
+    "D2",   # 2. Bundesliga
+    "SP2",  # La Liga 2
+    "I2",   # Serie B
+    "N1",   # Eredivisie
+    "P1",   # Primeira Liga
+    "T1",   # Süper Lig
+    "B1",   # Belgian Pro League
+    "SC0",  # Scottish Premiership
+]
 
 LEAGUE_NAMES: dict[str, str] = {
     "F1": "Ligue 1",
@@ -31,13 +50,23 @@ LEAGUE_NAMES: dict[str, str] = {
     "D1": "Bundesliga",
     "SP1": "La Liga",
     "I1": "Serie A",
+    "E1": "Championship",
+    "F2": "Ligue 2",
+    "D2": "2. Bundesliga",
+    "SP2": "La Liga 2",
+    "I2": "Serie B",
+    "N1": "Eredivisie",
+    "P1": "Primeira Liga",
+    "T1": "Süper Lig",
+    "B1": "Belgian Pro League",
+    "SC0": "Scottish Premiership",
 }
 
-# Saisons de 2010-2011 à 2024-2025
+# Saisons de 2010-2011 à 2025-2026
 SEASONS: list[str] = [
     "1011", "1112", "1213", "1314", "1415",
     "1516", "1617", "1718", "1819", "1920",
-    "2021", "2122", "2223", "2324", "2425",
+    "2021", "2122", "2223", "2324", "2425", "2526",
 ]
 
 BASE_URL: str = "https://www.football-data.co.uk/mmz4281/{season}/{league}.csv"
@@ -69,14 +98,34 @@ CSV_TO_MODEL_COLUMNS: dict[str, str] = {
     "AY": "ay",
     "HR": "hr",
     "AR": "ar",
+    # Moyenne marché (format récent)
     "AvgH": "avg_h",
     "AvgD": "avg_d",
     "AvgA": "avg_a",
     "Avg>2.5": "avg_over_25",
     "Avg<2.5": "avg_under_25",
+    # Clôture B365
     "B365CH": "b365_ch",
     "B365CD": "b365_cd",
     "B365CA": "b365_ca",
+}
+
+# Colonnes individuelles bookmakers — pour reconstruire avg_h quand absent
+# Format ancien (<2016) : BbAvH/D/A. Format récent : AvgH/D/A.
+ODDS_FALLBACK_COLUMNS: dict[str, list[str]] = {
+    # Colonnes Home
+    "raw_h": ["BbAvH", "B365H", "PSH", "WHH", "BWH", "IWH", "VCH", "SJH", "GBH", "BbMxH"],
+    # Colonnes Draw
+    "raw_d": ["BbAvD", "B365D", "PSD", "WHD", "BWD", "IWD", "VCD", "SJD", "GBD", "BbMxD"],
+    # Colonnes Away
+    "raw_a": ["BbAvA", "B365A", "PSA", "WHA", "BWA", "IWA", "VCA", "SJA", "GBA", "BbMxA"],
+    # Over/Under 2.5
+    "raw_over":  ["BbAv>2.5", "Avg>2.5"],
+    "raw_under": ["BbAv<2.5", "Avg<2.5"],
+    # B365 closing (pour odds_mov)
+    "b365_ch": ["B365CH", "B365H"],
+    "b365_cd": ["B365CD", "B365D"],
+    "b365_ca": ["B365CA", "B365A"],
 }
 
 # Colonnes attendues dans le CSV source (avant renommage)
@@ -110,38 +159,95 @@ def download_csv(url: str) -> Optional[pd.DataFrame]:
         return None
 
 
+def _first_valid_numeric(df: pd.DataFrame, cols: list[str]) -> pd.Series:
+    """Retourne la première colonne non-NaN parmi cols, ou NaN si aucune."""
+    result = pd.Series(np.nan, index=df.index)
+    for col in cols:
+        if col in df.columns:
+            filled = pd.to_numeric(df[col], errors="coerce")
+            mask = result.isna() & filled.notna()
+            result[mask] = filled[mask]
+    return result
+
+
+def _avg_valid_numeric(df: pd.DataFrame, cols: list[str]) -> pd.Series:
+    """Moyenne des colonnes disponibles (ignore NaN)."""
+    valid = [pd.to_numeric(df[c], errors="coerce") for c in cols if c in df.columns]
+    if not valid:
+        return pd.Series(np.nan, index=df.index)
+    return pd.concat(valid, axis=1).mean(axis=1)
+
+
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Nettoie le DataFrame brut :
-    1. Filtre uniquement les colonnes pertinentes pour matches_raw
-    2. Utilise reindex pour créer les colonnes manquantes (NaN) — évite KeyError
-    3. Convertit les dates proprement
+    Nettoie le DataFrame brut.
+    Récupère les cotes depuis plusieurs sources (format récent AvgH, format ancien BbAvH,
+    bookmakers individuels B365/Pinnacle/WH…) pour maximiser la couverture.
     """
-    # Étape 1 : Reindex pour garantir la présence de toutes les colonnes
-    # Les colonnes absentes seront remplies avec NaN (pas de KeyError)
-    df = df.reindex(columns=EXPECTED_CSV_COLUMNS)
+    # Garder toutes les colonnes — on piocher dedans avant de filtrer
+    all_expected = list(EXPECTED_CSV_COLUMNS)
+    for group in ODDS_FALLBACK_COLUMNS.values():
+        all_expected += [c for c in group if c not in all_expected]
+    df = df.reindex(columns=all_expected)
 
-    # Étape 2 : Renommage vers les noms du modèle SQLAlchemy
+    # Renommage colonnes de base
     df = df.rename(columns=CSV_TO_MODEL_COLUMNS)
 
-    # Étape 3 : Conversion de la date (format DD/MM/YYYY ou DD/MM/YY)
-    df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
+    # --- Reconstruction avg_h/d/a depuis toutes les sources disponibles ---
+    # Priorité : AvgH (déjà renommé) → BbAvH → moyenne B365/Pinnacle/WH…
+    for target, src_cols in [
+        ("avg_h", ODDS_FALLBACK_COLUMNS["raw_h"]),
+        ("avg_d", ODDS_FALLBACK_COLUMNS["raw_d"]),
+        ("avg_a", ODDS_FALLBACK_COLUMNS["raw_a"]),
+    ]:
+        if target not in df.columns:
+            df[target] = np.nan
+        df[target] = pd.to_numeric(df[target], errors="coerce")
+        missing = df[target].isna()
+        if missing.any():
+            fallback = _avg_valid_numeric(df[missing], src_cols)
+            df.loc[missing, target] = fallback
 
-    # Étape 4 : Suppression des lignes sans date ou sans résultat
+    # --- Over/Under 2.5 ---
+    for target, src_cols in [
+        ("avg_over_25", ODDS_FALLBACK_COLUMNS["raw_over"]),
+        ("avg_under_25", ODDS_FALLBACK_COLUMNS["raw_under"]),
+    ]:
+        if target not in df.columns:
+            df[target] = np.nan
+        df[target] = pd.to_numeric(df[target], errors="coerce")
+        missing = df[target].isna()
+        if missing.any():
+            fallback = _first_valid_numeric(df[missing], src_cols)
+            df.loc[missing, target] = fallback
+
+    # --- B365 closing (odds_mov) ---
+    for target, src_cols in [
+        ("b365_ch", ODDS_FALLBACK_COLUMNS["b365_ch"]),
+        ("b365_cd", ODDS_FALLBACK_COLUMNS["b365_cd"]),
+        ("b365_ca", ODDS_FALLBACK_COLUMNS["b365_ca"]),
+    ]:
+        if target not in df.columns:
+            df[target] = np.nan
+        df[target] = pd.to_numeric(df[target], errors="coerce")
+        missing = df[target].isna()
+        if missing.any():
+            fallback = _first_valid_numeric(df[missing], src_cols)
+            df.loc[missing, target] = fallback
+
+    # Conversion date
+    df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
     df = df.dropna(subset=["date", "home_team", "away_team", "fthg", "ftag", "ftr"])
 
-    # Étape 5 : Types numériques
+    # Types numériques
     int_columns: list[str] = ["fthg", "ftag", "hthg", "htag", "hs", "as_shots",
                                "hst", "ast", "hf", "af", "hc", "ac", "hy", "ay", "hr", "ar"]
     for col in int_columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    float_columns: list[str] = ["avg_h", "avg_d", "avg_a", "avg_over_25", "avg_under_25",
-                                 "b365_ch", "b365_cd", "b365_ca"]
-    for col in float_columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    logger.info(f"DataFrame nettoyé : {len(df)} lignes retenues")
+    odds_pct = df["avg_h"].notna().mean() * 100
+    logger.info(f"DataFrame nettoyé : {len(df)} lignes | Couverture cotes : {odds_pct:.1f}%")
     return df
 
 
@@ -171,55 +277,72 @@ def upsert_teams(session: Session, df: pd.DataFrame, league_code: str) -> dict[s
     return team_map
 
 
-def insert_matches(session: Session, df: pd.DataFrame, team_map: dict[str, int]) -> int:
-    """Insère les matchs dans matches_raw avec gestion des doublons."""
-    inserted_count: int = 0
+def _build_match_data(row: pd.Series, team_map: dict[str, int]) -> Optional[dict]:
+    """Prépare une ligne matches_raw depuis le CSV nettoyé."""
+    home_name: str = row["home_team"]
+    away_name: str = row["away_team"]
 
+    home_id: Optional[int] = team_map.get(home_name)
+    away_id: Optional[int] = team_map.get(away_name)
+    if home_id is None or away_id is None:
+        logger.warning(f"Équipe introuvable : {home_name} ou {away_name}")
+        return None
+
+    match_data: dict = {
+        "div": row["div"],
+        "date": row["date"],
+        "time": row.get("time") if pd.notna(row.get("time")) else None,
+        "home_team_id": home_id,
+        "away_team_id": away_id,
+        "fthg": int(row["fthg"]),
+        "ftag": int(row["ftag"]),
+        "ftr": str(row["ftr"]),
+        "hthg": int(row["hthg"]) if pd.notna(row.get("hthg")) else None,
+        "htag": int(row["htag"]) if pd.notna(row.get("htag")) else None,
+        "htr": str(row["htr"]) if pd.notna(row.get("htr")) else None,
+    }
+
+    stat_cols: list[str] = ["hs", "as_shots", "hst", "ast", "hf", "af", "hc", "ac", "hy", "ay", "hr", "ar"]
+    for col in stat_cols:
+        match_data[col] = int(row[col]) if pd.notna(row.get(col)) else None
+
+    odds_cols: list[str] = ["avg_h", "avg_d", "avg_a", "avg_over_25", "avg_under_25", "b365_ch", "b365_cd", "b365_ca"]
+    for col in odds_cols:
+        match_data[col] = float(row[col]) if pd.notna(row.get(col)) else None
+
+    return match_data
+
+
+def insert_matches(session: Session, df: pd.DataFrame, team_map: dict[str, int], chunk_size: int = 100) -> int:
+    """Insère les matchs par lots, avec retry si le pooler Supabase coupe la connexion."""
+    rows: list[dict] = []
     for _, row in df.iterrows():
-        home_name: str = row["home_team"]
-        away_name: str = row["away_team"]
+        match_data = _build_match_data(row, team_map)
+        if match_data:
+            rows.append(match_data)
 
-        home_id: Optional[int] = team_map.get(home_name)
-        away_id: Optional[int] = team_map.get(away_name)
+    inserted_count: int = 0
+    stmt = pg_insert(MatchRaw).on_conflict_do_nothing(constraint="uq_match_date_teams")
 
-        if home_id is None or away_id is None:
-            logger.warning(f"Équipe introuvable : {home_name} ou {away_name}")
-            continue
+    for start in range(0, len(rows), chunk_size):
+        chunk = rows[start:start + chunk_size]
+        for attempt in range(3):
+            try:
+                session.execute(stmt, chunk)
+                session.commit()
+                inserted_count += len(chunk)
+                break
+            except OperationalError as exc:
+                session.rollback()
+                if attempt == 2:
+                    raise
+                wait_s = 2 * (attempt + 1)
+                logger.warning(
+                    f"Connexion DB coupée pendant l'insert batch {start}-{start + len(chunk)}. "
+                    f"Retry dans {wait_s}s... ({exc.__class__.__name__})"
+                )
+                time.sleep(wait_s)
 
-        # Préparation des valeurs pour l'insertion
-        match_data: dict = {
-            "div": row["div"],
-            "date": row["date"],
-            "time": row.get("time") if pd.notna(row.get("time")) else None,
-            "home_team_id": home_id,
-            "away_team_id": away_id,
-            "fthg": int(row["fthg"]),
-            "ftag": int(row["ftag"]),
-            "ftr": str(row["ftr"]),
-            "hthg": int(row["hthg"]) if pd.notna(row.get("hthg")) else None,
-            "htag": int(row["htag"]) if pd.notna(row.get("htag")) else None,
-            "htr": str(row["htr"]) if pd.notna(row.get("htr")) else None,
-        }
-
-        # Statistiques (nullable)
-        stat_cols: list[str] = ["hs", "as_shots", "hst", "ast", "hf", "af",
-                                 "hc", "ac", "hy", "ay", "hr", "ar"]
-        for col in stat_cols:
-            match_data[col] = int(row[col]) if pd.notna(row.get(col)) else None
-
-        # Cotes (nullable)
-        odds_cols: list[str] = ["avg_h", "avg_d", "avg_a", "avg_over_25", "avg_under_25",
-                                 "b365_ch", "b365_cd", "b365_ca"]
-        for col in odds_cols:
-            match_data[col] = float(row[col]) if pd.notna(row.get(col)) else None
-
-        # Upsert : insérer ou ignorer si doublon (date + home + away)
-        stmt = pg_insert(MatchRaw).values(**match_data)
-        stmt = stmt.on_conflict_do_nothing(constraint="uq_match_date_teams")
-        session.execute(stmt)
-        inserted_count += 1
-
-    session.commit()
     logger.info(f"{inserted_count} matchs insérés/ignorés dans matches_raw")
     return inserted_count
 
@@ -239,8 +362,6 @@ def run_ingestion() -> bool:
 
     urls: list[dict[str, str]] = build_urls()
     total_matches: int = 0
-
-    session: Session = get_session()
 
     try:
         for entry in urls:
@@ -262,12 +383,16 @@ def run_ingestion() -> bool:
                 logger.warning(f"DataFrame vide après nettoyage pour {league}/{season}")
                 continue
 
-            # Insertion des équipes
-            team_map: dict[str, int] = upsert_teams(session, df, league)
+            session: Session = get_session()
+            try:
+                # Insertion des équipes
+                team_map: dict[str, int] = upsert_teams(session, df, league)
 
-            # Insertion des matchs
-            count: int = insert_matches(session, df, team_map)
-            total_matches += count
+                # Insertion des matchs
+                count: int = insert_matches(session, df, team_map)
+                total_matches += count
+            finally:
+                session.close()
 
         logger.info("=" * 60)
         logger.info(f"INGESTION TERMINÉE — {total_matches} matchs traités au total")
@@ -276,11 +401,7 @@ def run_ingestion() -> bool:
 
     except Exception as e:
         logger.error(f"Erreur fatale durant l'ingestion : {e}", exc_info=True)
-        session.rollback()
         return False
-
-    finally:
-        session.close()
 
 
 if __name__ == "__main__":

@@ -1,243 +1,181 @@
-'use client'
+"use client";
+import { useState, Suspense } from "react";
+import { createClient } from "@/utils/supabase/client";
+import { useSearchParams } from "next/navigation";
+import { BrandMark } from "@/components/BrandLockup";
+import { Card } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { Segmented } from "@/components/ui/Segmented";
+import { login, signup } from "@/app/auth/actions";
 
-import React, { Suspense } from 'react';
-import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { login } from '../auth/actions';
-import Logo from '@/components/Logo';
+function Field({ label, type = "text", placeholder, name }: { label: string; type?: string; placeholder?: string; name: string }) {
+  const [focus, setFocus] = useState(false);
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <span style={{ fontSize: 12, fontWeight: 500, color: "var(--text-soft)" }}>{label}</span>
+      <input
+        name={name} type={type} placeholder={placeholder} required
+        onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
+        style={{
+          padding: "11px 14px", fontSize: 14,
+          background: "var(--bg-inset)",
+          border: "1px solid",
+          borderColor: focus ? "var(--text)" : "var(--border)",
+          borderRadius: 10, color: "var(--text)",
+          outline: "none", transition: "border-color 0.15s",
+        }}
+      />
+    </label>
+  );
+}
 
-function LoginContent() {
+function AuthForm() {
   const searchParams = useSearchParams();
-  const error = searchParams.get('error');
-  const message = searchParams.get('message');
+  const initialTab = searchParams.get("tab") === "register" ? "signup" : "login";
+  const [tab, setTab] = useState<"login" | "signup">(initialTab as "login" | "signup");
+
+  const errorMsg = searchParams.get("error");
+  const message = searchParams.get("message");
+  const [loadingGoogle, setLoadingGoogle] = useState(false);
+
+  const handleGoogleLogin = async () => {
+    try {
+      setLoadingGoogle(true);
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+      if (error) throw error;
+    } catch (error: unknown) {
+      console.error("Google Auth error:", error);
+      setLoadingGoogle(false);
+      const message = error instanceof Error ? error.message : "Erreur de connexion Google";
+      window.location.href = `/login?error=${encodeURIComponent(message)}`;
+    }
+  };
+
+  const [loadingGuest, setLoadingGuest] = useState(false);
+  const handleGuestLogin = () => {
+    setLoadingGuest(true);
+    // On redirige simplement vers le dashboard, le middleware ne bloque plus
+    window.location.href = "/dashboard";
+  };
 
   return (
-    <div className="auth-container">
-      <div className="auth-card">
-        <Link href="/" className="back-to-home">← Retour</Link>
-        <div className="auth-header">
-          <Logo width={200} height={50} />
-          <h1 style={{ marginTop: '1.5rem', fontSize: '1.8rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-            Connexion
+    <div style={{ background: "var(--bg)", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "80px 24px" }}>
+      <div style={{ width: "100%", maxWidth: 440 }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ display: "inline-flex", marginBottom: 20 }}>
+            <BrandMark size={40} />
+          </div>
+          <h1 style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 6 }}>
+            {tab === "login" ? "Content de te revoir." : "Crée ton compte."}
           </h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.5rem' }}>
-            Accédez aux prédictions neuronales avancées
+          <p style={{ fontSize: 14, color: "var(--text-soft)" }}>
+            {tab === "login" ? "Connecte-toi à ton tableau de bord." : "7 jours d'essai gratuits, sans carte bancaire."}
           </p>
         </div>
 
-        <form action={login} className="auth-form">
-          <div className="form-group">
-            <label htmlFor="email">Email</label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              placeholder="votre@email.com"
-              required
-              className="auth-input"
+        {message && (
+          <div style={{ padding: "12px 16px", borderRadius: 10, background: "var(--good-tint)", border: "1px solid var(--good)", color: "var(--good)", fontSize: 13, marginBottom: 16 }}>
+            {message}
+          </div>
+        )}
+        {errorMsg && (
+          <div style={{ padding: "12px 16px", borderRadius: 10, background: "var(--bad-tint)", color: "var(--bad)", fontSize: 13, marginBottom: 16 }}>
+            {decodeURIComponent(errorMsg)}
+          </div>
+        )}
+
+        <Card pad={28}>
+          <div style={{ marginBottom: 20 }}>
+            <Segmented
+              value={tab}
+              onChange={(v) => setTab(v as "login" | "signup")}
+              options={[{ value: "login", label: "Connexion" }, { value: "signup", label: "Inscription" }]}
             />
           </div>
 
-          <div className="form-group">
-            <label htmlFor="password">Mot de passe</label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              placeholder="••••••••"
-              required
-              className="auth-input"
-            />
+          {/* Login form */}
+          {tab === "login" && (
+            <form action={login} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <Field label="E-mail" name="email" type="email" placeholder="toi@exemple.com" />
+              <Field label="Mot de passe" name="password" type="password" placeholder="••••••••" />
+              <div style={{ fontSize: 12, textAlign: "right" }}>
+                <span style={{ color: "var(--text-soft)", textDecoration: "underline", textUnderlineOffset: 3, cursor: "pointer" }}>
+                  Mot de passe oublié ?
+                </span>
+              </div>
+              <Button variant="primary" size="lg" style={{ width: "100%", marginTop: 6 }}>
+                Se connecter
+              </Button>
+            </form>
+          )}
+
+          {/* Signup form */}
+          {tab === "signup" && (
+            <form action={signup} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <Field label="Nom complet" name="name" placeholder="Jean Dupont" />
+              <Field label="E-mail" name="email" type="email" placeholder="toi@exemple.com" />
+              <Field label="Mot de passe" name="password" type="password" placeholder="••••••••" />
+              <Button variant="primary" size="lg" style={{ width: "100%", marginTop: 6 }}>
+                Créer mon compte
+              </Button>
+            </form>
+          )}
+
+          <div style={{ margin: "20px 0 16px", display: "flex", alignItems: "center", gap: 10, color: "var(--text-muted)", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            ou
+            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
           </div>
 
-          {error && (
-            <div className="auth-error">
-              <span className="error-icon">⚠️</span>
-              {error}
+          <Button 
+            variant="secondary" 
+            size="lg" 
+            style={{ width: "100%" }} 
+            type="button" 
+            onClick={handleGoogleLogin} 
+            disabled={loadingGoogle || loadingGuest}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {loadingGoogle ? <span className="spinner" /> : null}
+              {loadingGoogle ? "Redirection..." : "Continuer avec Google"}
             </div>
-          )}
+          </Button>
 
-          {message && (
-            <div className="auth-message">
-              {message}
-            </div>
-          )}
+          <div style={{ marginTop: 12 }}>
+            <Button 
+              variant="ghost" 
+              size="md" 
+              style={{ width: "100%", border: "1px dashed var(--border-strong)" }} 
+              type="button" 
+              onClick={handleGuestLogin}
+              disabled={loadingGoogle || loadingGuest}
+            >
+              {loadingGuest ? "Chargement..." : "Explorer sans compte (Mode Démo)"}
+            </Button>
+          </div>
+        </Card>
 
-          <button type="submit" className="auth-submit">
-            Se connecter
-          </button>
-        </form>
-
-        <div className="auth-footer">
-          Nouveau sur Next-Bet-AI ?{' '}
-          <Link href="/register" className="auth-link">
-            Créer un compte
-          </Link>
-        </div>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", marginTop: 20, lineHeight: 1.6 }}>
+          En continuant tu acceptes nos{" "}
+          <span style={{ textDecoration: "underline", textUnderlineOffset: 3, cursor: "pointer" }}>conditions</span>{" "}
+          et notre{" "}
+          <span style={{ textDecoration: "underline", textUnderlineOffset: 3, cursor: "pointer" }}>politique de confidentialité</span>.
+        </p>
       </div>
-
-      <style jsx>{`
-        .auth-container {
-          min-height: 100vh;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: radial-gradient(circle at top right, rgba(245, 158, 11, 0.1), transparent),
-                      radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.1), transparent),
-                      var(--bg-darker);
-          padding: 2rem;
-          position: relative;
-        }
-
-        .back-to-home {
-          position: absolute;
-          top: 1.5rem;
-          left: 1.5rem;
-          color: var(--text-muted);
-          text-decoration: none;
-          font-weight: 700;
-          font-size: 0.8rem;
-          transition: all 0.2s;
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-        }
-
-        .back-to-home:hover {
-          color: var(--color-accent);
-          transform: translateX(-4px);
-        }
-
-        .auth-card {
-          background: var(--glass-bg);
-          backdrop-filter: blur(20px);
-          border: 1px solid var(--glass-border);
-          border-radius: 24px;
-          padding: 3rem;
-          width: 100%;
-          max-width: 450px;
-          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-          animation: fadeIn 0.5s ease-out;
-        }
-
-        .auth-header {
-          text-align: center;
-          margin-bottom: 2.5rem;
-        }
-
-        .auth-form {
-          display: flex;
-          flex-direction: column;
-          gap: 1.5rem;
-        }
-
-        .form-group {
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
-        }
-
-        .form-group label {
-          font-size: 0.85rem;
-          font-weight: 600;
-          color: var(--text-secondary);
-          margin-left: 4px;
-        }
-
-        .auth-input {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid var(--glass-border);
-          border-radius: 12px;
-          padding: 0.8rem 1rem;
-          color: var(--text-primary);
-          font-size: 1rem;
-          transition: all 0.2s ease;
-        }
-
-        .auth-input:focus {
-          outline: none;
-          border-color: var(--color-accent);
-          background: rgba(255, 255, 255, 0.08);
-          box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.1);
-        }
-
-        .auth-submit {
-          background: linear-gradient(135deg, var(--color-accent), #f59e0b);
-          color: white;
-          border: none;
-          border-radius: 12px;
-          padding: 1rem;
-          font-weight: 700;
-          font-size: 1rem;
-          cursor: pointer;
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
-          margin-top: 1rem;
-        }
-
-        .auth-submit:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 10px 20px -5px rgba(245, 158, 11, 0.4);
-        }
-
-        .auth-submit:active {
-          transform: translateY(0);
-        }
-
-        .auth-error {
-          background: rgba(239, 68, 68, 0.1);
-          border: 1px solid rgba(239, 68, 68, 0.2);
-          color: #fca5a5;
-          padding: 0.8rem;
-          border-radius: 10px;
-          font-size: 0.9rem;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-
-        .auth-message {
-          background: rgba(16, 185, 129, 0.1);
-          border: 1px solid rgba(16, 185, 129, 0.2);
-          color: #6ee7b7;
-          padding: 0.8rem;
-          border-radius: 10px;
-          font-size: 0.9rem;
-        }
-
-        .auth-footer {
-          text-align: center;
-          margin-top: 2rem;
-          color: var(--text-secondary);
-          font-size: 0.9rem;
-        }
-
-        .auth-link {
-          color: var(--color-accent);
-          font-weight: 700;
-          text-decoration: none;
-          transition: filter 0.2s;
-        }
-
-        .auth-link:hover {
-          filter: brightness(1.2);
-          text-decoration: underline;
-        }
-
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
     </div>
   );
 }
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-darker)', color: 'var(--color-accent)' }}>Chargement en cours...</div>}>
-      <LoginContent />
+    <Suspense>
+      <AuthForm />
     </Suspense>
   );
 }

@@ -1,0 +1,52 @@
+[
+  {
+    "league_code": "F1",
+    "league_name": "Ligue 1",
+    "ok": true,
+    "matches": 5728,
+    "test_accuracy": 0.5332,
+    "market_baseline_test_accuracy": 0.542,
+    "best_vs_market_delta": -0.0088,
+    "best_approach": "lightgbm"
+  },
+  {
+    "league_code": "E0",
+    "league_name": "Premier League",
+    "ok": true,
+    "matches": 6038,
+    "test_accuracy": 0.5108,
+    "market_baseline_test_accuracy": 0.5274,
+    "best_vs_market_delta": -0.0166,
+    "best_approach": "xgboost"
+  },
+  {
+    "league_code": "D1",
+    "league_name": "Bundesliga",
+    "ok": true,
+    "matches": 4869,
+    "test_accuracy": 0.5144,
+    "market_baseline_test_accuracy": 0.5329,
+    "best_vs_market_delta": -0.0185,
+    "best_approach": "nn_ensemble"
+  },
+  {
+    "league_code": "SP1",
+    "league_name": "La Liga",
+    "ok": true,
+    "matches": 6029,
+    "test_accuracy": 0.5449,
+    "market_baseline_test_accuracy": 0.5449,
+    "best_vs_market_delta": 0.0,
+    "best_approach": "xgboost"
+  },
+  {
+    "league_code": "I1",
+    "league_name": "Serie A",
+    "ok": true,
+    "matches": 6038,
+    "test_accuracy": 0.5439,
+    "market_baseline_test_accuracy": 0.5423,
+    "best_vs_market_delta": 0.0016,
+    "best_approach": "nn_ensemble"
+  }
+]

@@ -1,14 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  eslint: {
-    // On ignore ESLint au build pour débloquer le déploiement Beta
-    ignoreDuringBuilds: true,
+  allowedDevOrigins: ['10.5.0.2'],
+  images: {
+    remotePatterns: [
+      { protocol: "https", hostname: "media.api-sports.io", pathname: "/football/teams/**" },
+    ],
   },
-  typescript: {
-    // Idem pour TypeScript si besoin
-    ignoreBuildErrors: true,
-  }
 };
 
 export default nextConfig;

@@ -4,7 +4,7 @@ import React from "react";
 import { useTheme } from "@/context/ThemeContext";
 
 const ThemeToggle: React.FC = () => {
-  const { theme, toggleTheme } = useTheme();
+  const { mode: theme, toggleMode: toggleTheme } = useTheme();
 
   return (
     <button

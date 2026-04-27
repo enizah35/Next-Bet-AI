@@ -7,6 +7,9 @@ Clé API gratuite : https://the-odds-api.com/ (500 req/mois)
 
 import logging
 import os
+import json
+import time
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -22,8 +25,23 @@ ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports"
 # Mapping des ligues vers les clés The Odds API
 LEAGUE_KEYS = {
     "Premier League": "soccer_epl",
+    "Championship": "soccer_efl_champ",
     "Ligue 1": "soccer_france_ligue_one",
+    "Ligue 2": "soccer_france_ligue_two",
+    "Bundesliga": "soccer_germany_bundesliga",
+    "2. Bundesliga": "soccer_germany_bundesliga2",
+    "La Liga": "soccer_spain_la_liga",
+    "La Liga 2": "soccer_spain_segunda_division",
+    "Serie A": "soccer_italy_serie_a",
+    "Serie B": "soccer_italy_serie_b",
+    "Eredivisie": "soccer_netherlands_eredivisie",
+    "Primeira Liga": "soccer_portugal_primeira_liga",
+    "Süper Lig": "soccer_turkey_super_league",
+    "SÃ¼per Lig": "soccer_turkey_super_league",
+    "Belgian Pro League": "soccer_belgium_first_div",
+    "Scottish Premiership": "soccer_spl",
 }
+SNAPSHOT_PATH = Path(os.getenv("LIVE_ODDS_SNAPSHOT_PATH", "scripts/live_odds_snapshot.json"))
 
 # Alias pour matcher les noms ESPN/DB → noms The Odds API
 TEAM_NAME_MAP = {
@@ -85,6 +103,56 @@ for db_name, api_names in TEAM_NAME_MAP.items():
 def _normalize_team(odds_api_name: str) -> str:
     """Convertit un nom The Odds API vers notre nom DB."""
     return _REVERSE_MAP.get(odds_api_name.lower(), odds_api_name)
+
+
+def _snapshot_key(league: str, home_team: str, away_team: str) -> str:
+    return f"{league}|{home_team}|{away_team}".lower()
+
+
+def _load_snapshot() -> dict:
+    try:
+        if SNAPSHOT_PATH.exists():
+            with open(SNAPSHOT_PATH, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.debug(f"Lecture snapshot cotes impossible: {e}")
+    return {}
+
+
+def _save_snapshot(snapshot: dict) -> None:
+    try:
+        SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(SNAPSHOT_PATH, "w") as f:
+            json.dump(snapshot, f, indent=2)
+    except Exception as e:
+        logger.debug(f"Sauvegarde snapshot cotes impossible: {e}")
+
+
+def _attach_odds_movement(league: str, odds: dict[tuple[str, str], dict]) -> None:
+    """
+    Approxime le mouvement ouverture -> courant avec le premier snapshot observé.
+    Au premier passage, les mouvements valent 0. Ensuite, ils deviennent current - previous.
+    """
+    snapshot = _load_snapshot()
+    now = int(time.time())
+
+    for (home_team, away_team), data in odds.items():
+        key = _snapshot_key(league, home_team, away_team)
+        previous = snapshot.get(key, {})
+        data["odds_mov_home"] = round(data["implied_home"] - previous.get("implied_home", data["implied_home"]), 4)
+        data["odds_mov_draw"] = round(data["implied_draw"] - previous.get("implied_draw", data["implied_draw"]), 4)
+        data["odds_mov_away"] = round(data["implied_away"] - previous.get("implied_away", data["implied_away"]), 4)
+        snapshot[key] = {
+            "league": league,
+            "home_team": home_team,
+            "away_team": away_team,
+            "implied_home": data["implied_home"],
+            "implied_draw": data["implied_draw"],
+            "implied_away": data["implied_away"],
+            "updated_at": now,
+        }
+
+    _save_snapshot(snapshot)
 
 
 def fetch_live_odds(league: str) -> dict[tuple[str, str], dict]:
@@ -190,6 +258,7 @@ def fetch_live_odds(league: str) -> dict[tuple[str, str], dict]:
             },
         }
 
+    _attach_odds_movement(league, results)
     logger.info(f"Cotes live: {len(results)} matchs récupérés pour {league}")
     return results
 

@@ -5,23 +5,43 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { cookies } from 'next/headers'
 
+function isRedirectError(error: unknown) {
+  return typeof error === 'object'
+    && error !== null
+    && 'digest' in error
+    && typeof (error as { digest?: unknown }).digest === 'string'
+    && (error as { digest: string }).digest.startsWith('NEXT_REDIRECT');
+}
+
 export async function login(formData: FormData) {
-  const cookieStore = await cookies()
-  const supabase = createClient(cookieStore)
+  console.log("==> login action started");
+  try {
+    const cookieStore = await cookies()
+    const supabase = createClient(cookieStore)
 
-  const data = {
-    email: formData.get('email') as string,
-    password: formData.get('password') as string,
+    const data = {
+      email: formData.get('email') as string,
+      password: formData.get('password') as string,
+    }
+    
+    console.log("==> attempting signInWithPassword for:", data.email);
+    const { error } = await supabase.auth.signInWithPassword(data)
+
+    if (error) {
+      console.log("==> auth error:", error.message);
+      redirect('/login?error=' + encodeURIComponent(error.message))
+    }
+
+    console.log("==> login successful, redirecting to /dashboard");
+    revalidatePath('/', 'layout')
+    redirect('/dashboard')
+  } catch (err: unknown) {
+    if (isRedirectError(err)) {
+      throw err;
+    }
+    console.error("==> unexpected error in login action:", err);
+    throw err;
   }
-
-  const { error } = await supabase.auth.signInWithPassword(data)
-
-  if (error) {
-    redirect('/login?error=' + encodeURIComponent(error.message))
-  }
-
-  revalidatePath('/', 'layout')
-  redirect('/dashboard')
 }
 
 export async function signup(formData: FormData) {
@@ -33,14 +53,22 @@ export async function signup(formData: FormData) {
     password: formData.get('password') as string,
   }
 
-  const { error } = await supabase.auth.signUp(data)
+  try {
+    const { error } = await supabase.auth.signUp(data)
 
-  if (error) {
-    redirect('/register?error=' + encodeURIComponent(error.message))
+    if (error) {
+      redirect('/register?error=' + encodeURIComponent(error.message))
+    }
+
+    revalidatePath('/', 'layout')
+    redirect('/login?message=Check your email to confirm your account')
+  } catch (err: unknown) {
+    if (isRedirectError(err)) {
+      throw err;
+    }
+    console.error("Signup error:", err);
+    throw err;
   }
-
-  revalidatePath('/', 'layout')
-  redirect('/login?message=Check your email to confirm your account')
 }
 
 export async function getProfile() {

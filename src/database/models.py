@@ -108,6 +108,9 @@ class MatchRaw(Base):
     home_xpts: float | None = Column(Float, nullable=True)
     away_xpts: float | None = Column(Float, nullable=True)
 
+    # Identifiant API-Football (pour enrichissement Pro)
+    api_fixture_id: int | None = Column(Integer, nullable=True, index=True)
+
     # Cotes — Moyennes du marché
     avg_h: float | None = Column(Float, nullable=True)        # Average Home Win
     avg_d: float | None = Column(Float, nullable=True)        # Average Draw
@@ -184,6 +187,10 @@ class MatchFeature(Base):
     h2h_avg_goals: float | None = Column(Float, nullable=True)
     h2h_matches: float | None = Column(Float, nullable=True)
 
+    # Blessures pré-match (API-Football Pro)
+    home_injured_count: float | None = Column(Float, nullable=True)
+    away_injured_count: float | None = Column(Float, nullable=True)
+
     # Relation inverse
     match = relationship("MatchRaw", back_populates="features")
 
@@ -220,6 +227,9 @@ class PredictionLog(Base):
     actual_away_goals: int | None = Column(Integer, nullable=True)
     is_won: bool | None = Column(Boolean, nullable=True)  # None = pending, True = won, False = lost
     
+    # Features utilisées pour la prédiction (JSON dict) — pour le feedback loop
+    features_json: str | None = Column(String(8192), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, nullable=False)
     verified_at = Column(DateTime, nullable=True)

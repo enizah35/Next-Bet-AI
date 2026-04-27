@@ -5,10 +5,9 @@ Sources : Calendrier ESPN, Météo Open-Meteo, Alertes RSS BBC/RMC.
 """
 
 import logging
+import os
 import random
-import re
 from datetime import datetime, timedelta
-from typing import Any
 import concurrent.futures
 
 import feedparser
@@ -20,6 +19,7 @@ from src.database.database import get_session
 from src.database.models import Team
 
 logger: logging.Logger = logging.getLogger(__name__)
+LIVE_ODDS_IN_FAST = os.getenv("LIVE_ODDS_IN_FAST", "true").lower() == "true"
 
 # Coordinates mapping for demo/weather
 STADIUM_COORDS = {
@@ -37,12 +37,51 @@ STADIUM_COORDS = {
     "Lille": (50.6120, 3.1305),
 }
 
+# Codes ESPN pour chaque ligue (site.api.espn.com)
+ESPN_LEAGUE_CODES: dict[str, str] = {
+    "Premier League": "eng.1",
+    "Championship":   "eng.2",
+    "Ligue 1":        "fra.1",
+    "Ligue 2":        "fra.2",
+    "Bundesliga":     "ger.1",
+    "2. Bundesliga":  "ger.2",
+    "La Liga":        "esp.1",
+    "La Liga 2":      "esp.2",
+    "Serie A":        "ita.1",
+    "Serie B":        "ita.2",
+    "Eredivisie":     "ned.1",
+    "Primeira Liga":  "por.1",
+    "Süper Lig":      "tur.1",
+    "Belgian Pro League": "bel.1",
+    "Scottish Premiership": "sco.1",
+}
+
 RSS_FEEDS = {
     "Premier League": "http://feeds.bbci.co.uk/sport/football/rss.xml",
-    "Ligue 1": "https://rmcsport.bfmtv.com/rss/football/",
+    "Championship":   "http://feeds.bbci.co.uk/sport/football/rss.xml",
+    "Ligue 1":        "https://rmcsport.bfmtv.com/rss/football/",
+    "Ligue 2":        "https://rmcsport.bfmtv.com/rss/football/",
 }
 
 NEGATIVE_KEYWORDS = ["blessé", "blessure", "absent", "forfait", "injury", "out", "doubt", "sidelined"]
+
+FAST_FALLBACK_TEAMS: dict[str, list[str]] = {
+    "Premier League": ["Arsenal", "Man City", "Liverpool", "Chelsea", "Tottenham", "Man United", "Newcastle", "Aston Villa"],
+    "Championship": ["Leeds", "Leicester", "Southampton", "West Brom", "Norwich", "Middlesbrough", "Sunderland", "Watford"],
+    "Ligue 1": ["Paris SG", "Marseille", "Lyon", "Monaco", "Lille", "Rennes", "Nice", "Lens"],
+    "Ligue 2": ["Saint-Etienne", "Bordeaux", "Auxerre", "Caen", "Paris FC", "Guingamp", "Amiens", "Bastia"],
+    "Bundesliga": ["Bayern Munich", "Dortmund", "Leverkusen", "RB Leipzig", "Frankfurt", "Stuttgart", "Wolfsburg", "Freiburg"],
+    "2. Bundesliga": ["Hamburg", "Schalke 04", "Hannover", "Hertha Berlin", "Nurnberg", "Karlsruhe", "Dusseldorf", "Kaiserslautern"],
+    "La Liga": ["Real Madrid", "Barcelona", "Atletico Madrid", "Sevilla", "Real Sociedad", "Villarreal", "Valencia", "Athletic Club"],
+    "La Liga 2": ["Espanyol", "Valladolid", "Leganes", "Eibar", "Zaragoza", "Oviedo", "Sporting Gijon", "Tenerife"],
+    "Serie A": ["Inter", "Milan", "Juventus", "Napoli", "Roma", "Lazio", "Atalanta", "Fiorentina"],
+    "Serie B": ["Parma", "Palermo", "Sampdoria", "Bari", "Venezia", "Cremonese", "Pisa", "Modena"],
+    "Eredivisie": ["PSV", "Ajax", "Feyenoord", "AZ Alkmaar", "Twente", "Utrecht", "Heerenveen", "Vitesse"],
+    "Primeira Liga": ["Benfica", "Porto", "Sporting CP", "Braga", "Guimaraes", "Boavista", "Famalicao", "Rio Ave"],
+    "SÃ¼per Lig": ["Galatasaray", "Fenerbahce", "Besiktas", "Trabzonspor", "Basaksehir", "Sivasspor", "Antalyaspor", "Alanyaspor"],
+    "Belgian Pro League": ["Club Brugge", "Anderlecht", "Genk", "Gent", "Antwerp", "Standard Liege", "Union SG", "Mechelen"],
+    "Scottish Premiership": ["Celtic", "Rangers", "Hearts", "Hibernian", "Aberdeen", "Motherwell", "Dundee", "St Mirren"],
+}
 
 
 def get_news_alerts(team_name: str, entries: list) -> list[str]:
@@ -81,12 +120,12 @@ def get_weather(team_name: str) -> int:
         return 1
 
 
-def get_upcoming_matches(league: str) -> list[dict]:
+def get_upcoming_matches(league: str, use_db_fallback: bool = True) -> list[dict]:
     """
     Tente de récupérer le calendrier des 7 jours à venir depuis l'API ESPN.
     Si ESPN retourne 0 match (intersaison / dates erronées), génère une simulation intelligente.
     """
-    espn_league_code = "eng.1" if league == "Premier League" else "fra.1"
+    espn_league_code = ESPN_LEAGUE_CODES.get(league, "eng.1")
     
     today = datetime.now()
     next_week = today + timedelta(days=7)
@@ -98,7 +137,7 @@ def get_upcoming_matches(league: str) -> list[dict]:
     matches_list = []
     
     try:
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, timeout=3)
         data = r.json()
         events = data.get("events", [])
         
@@ -126,6 +165,19 @@ def get_upcoming_matches(league: str) -> list[dict]:
     # Très robuste pour le DEV hors saison !
     # ============================================================
     if not matches_list:
+        if not use_db_fallback:
+            teams = FAST_FALLBACK_TEAMS.get(league, FAST_FALLBACK_TEAMS["Premier League"]).copy()
+            random.shuffle(teams)
+            for i in range(0, len(teams) - 1, 2):
+                match_dt = today + timedelta(days=random.randint(1, 7), hours=random.randint(14, 21))
+                matches_list.append({
+                    "homeTeam": teams[i],
+                    "awayTeam": teams[i + 1],
+                    "dateStr": match_dt.strftime("%Y-%m-%dT%H:%M:00Z"),
+                })
+            logger.info(f"Fallback rapide local: {len(matches_list)} matchs simulés pour {league}.")
+            return matches_list
+
         logger.info(f"API ESPN sans match pour la {league}. Initialisation de la Simulation de remplacement basées sur la DB...")
         session: Session = get_session()
         
@@ -156,44 +208,49 @@ def get_upcoming_matches(league: str) -> list[dict]:
     return matches_list
 
 
-def enrich_pipeline(league: str) -> list[dict]:
-    """Exécute tout le pipeline de récupération (Météo, RSS, Sentiment, Matchs) et retourne la raw list (Optimisé)."""
-    logger.info(f"--- Démarrage Pipeline Live Data pour {league} ---")
-    matches = get_upcoming_matches(league)
+def enrich_pipeline(league: str, fast: bool = False) -> list[dict]:
+    """Exécute le pipeline live data. En mode fast, évite les appels externes secondaires."""
+    logger.info(f"--- Démarrage Pipeline Live Data pour {league} (fast={fast}) ---")
+    matches = get_upcoming_matches(league, use_db_fallback=not fast)
     
     enriched = []
     
     # Pre-fetch RSS ONCE for the whole league (injuries)
     feed_url = RSS_FEEDS.get(league)
     feed_entries = []
-    if feed_url:
+    if feed_url and not fast:
         try:
-            feed = feedparser.parse(feed_url)
+            response = requests.get(feed_url, timeout=3)
+            response.raise_for_status()
+            feed = feedparser.parse(response.content)
             feed_entries = feed.entries[:20]
         except Exception as e:
             logger.warning(f"Erreur requête globale RSS: {e}")
 
     # Pre-fetch RSS pour le sentiment (sources multiples)
     from src.ingestion.news_sentiment import fetch_rss_entries, get_match_sentiment
-    sentiment_entries = fetch_rss_entries(league)
+    sentiment_entries = [] if fast else fetch_rss_entries(league)
 
     # Pre-fetch cotes live (1 seul appel API pour toute la ligue)
     from src.ingestion.live_odds import fetch_live_odds, get_match_odds
-    odds_cache = fetch_live_odds(league)
+    odds_cache = {} if fast and not LIVE_ODDS_IN_FAST else fetch_live_odds(league)
 
     # Process matches sequentially for news, but pre-fetch weather in parallel
     home_teams = [m["homeTeam"] for m in matches]
     
-    # Fetch weather concurrently
-    weather_results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_ht = {executor.submit(get_weather, ht): ht for ht in home_teams}
-        for future in concurrent.futures.as_completed(future_to_ht):
-            ht = future_to_ht[future]
-            try:
-                weather_results[ht] = future.result()
-            except Exception:
-                weather_results[ht] = 1
+    # Fetch weather concurrently, sauf en mode fast où une valeur neutre suffit.
+    if fast:
+        weather_results = {ht: 1 for ht in home_teams}
+    else:
+        weather_results = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_ht = {executor.submit(get_weather, ht): ht for ht in home_teams}
+            for future in concurrent.futures.as_completed(future_to_ht):
+                ht = future_to_ht[future]
+                try:
+                    weather_results[ht] = future.result()
+                except Exception:
+                    weather_results[ht] = 1
 
     for m in matches:
         ht = m["homeTeam"]
