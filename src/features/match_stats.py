@@ -11,7 +11,7 @@ from sqlalchemy import select, or_, desc, func
 from sqlalchemy.orm import Session
 
 from src.database.database import get_session
-from src.database.models import Team, MatchRaw
+from src.database.models import MatchRaw
 from src.features.team_resolver import resolve_team_map
 
 logger = logging.getLogger(__name__)

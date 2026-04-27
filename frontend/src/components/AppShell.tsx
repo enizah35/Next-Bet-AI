@@ -10,7 +10,6 @@ const navItems = [
   { href: "/dashboard", label: "Analyses", icon: <I.Spark size={18} /> },
   { href: "/tips",      label: "Tips du Jour", icon: <I.Flame size={18} /> },
   { href: "/stats",     label: "Stats & AI", icon: <I.Chart size={18} /> },
-  { href: "/admin",     label: "Admin", icon: <I.Shield size={18} /> },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

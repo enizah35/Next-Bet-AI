@@ -11,7 +11,7 @@ from typing import Optional
 from sqlalchemy import select, desc, or_
 from sqlalchemy.orm import Session
 
-from src.database.models import Team, MatchRaw, MatchFeature
+from src.database.models import MatchRaw, MatchFeature
 from src.features.team_resolver import resolve_team_map
 
 logger = logging.getLogger(__name__)

@@ -17,13 +17,32 @@ type Match = {
   valueBet?: { active?: boolean; edge?: number; selection?: string; bookmaker?: string };
   recommendation?: string;
   stats?: { btts_pct?: number; over25_pct?: number; over15_pct?: number; home_form?: string[]; away_form?: string[]; predicted_goals?: number; predicted_corners?: number; predicted_cards?: number };
+  betBuilder?: BetBuilder;
   details?: { homeElo?: number; awayElo?: number; homeDaysRest?: number; awayDaysRest?: number; weatherCode?: number };
 };
 
-type Leg = { label: string; cat: string; odds: number };
+type BetBuilderSelection = {
+  key?: string;
+  label_fr?: string;
+  label?: string;
+  category?: string;
+  confidence?: number;
+  odds?: number;
+  bookmaker?: string;
+};
+type BetBuilder = {
+  selections?: BetBuilderSelection[];
+  combined_odds?: number;
+  combined_confidence?: number;
+  source?: string;
+  profile?: string;
+};
+type Leg = { key?: string; label: string; cat: string; odds: number; confidence?: number; bookmaker?: string };
 type Combo = { id: string; profile: "safe" | "balanced" | "bold"; confidence: number; legs: Leg[]; totalOdds: number; combinedProb: number; edge: number };
 
 function buildCombos(m: Match): Combo[] {
+  return buildRealCombos(m);
+
   const pr = m.probs ?? { p1: 33, pn: 33, p2: 33 };
   const st = m.stats ?? {};
   const fav = pr.p1 >= pr.p2 ? "home" : "away";
@@ -44,6 +63,104 @@ function buildCombos(m: Match): Combo[] {
   return configs.map((c) => {
     const totalOdds = c.legs.reduce((a, l) => a * l.odds, 1);
     return { ...c, totalOdds, combinedProb: c.confidence * 0.85, edge: ((c.confidence / 100) * totalOdds - 1) * 100 };
+  });
+}
+
+function clampPct(value: number) {
+  return Math.max(1, Math.min(99, Number.isFinite(value) ? value : 50));
+}
+
+function fairOdds(confidence: number, haircut = 0.94) {
+  return +Math.max(1.01, (100 / clampPct(confidence)) * haircut).toFixed(2);
+}
+
+function makeRealCombo(id: string, profile: Combo["profile"], legs: Leg[], backendConfidence?: number, backendOdds?: number): Combo | null {
+  if (legs.length === 0) return null;
+  const totalOdds = backendOdds && legs.length > 2
+    ? backendOdds
+    : +legs.reduce((acc, leg) => acc * leg.odds, 1).toFixed(2);
+  const productProb = legs.reduce((acc, leg) => acc * (clampPct(leg.confidence ?? 50) / 100), 1) * 100;
+  const combinedProb = backendConfidence && legs.length > 2 ? backendConfidence : +productProb.toFixed(1);
+  const confidence = Math.round(combinedProb);
+  const edge = +(((combinedProb / 100) * totalOdds - 1) * 100).toFixed(1);
+  return { id, profile, confidence, legs, totalOdds, combinedProb, edge };
+}
+
+function backendLeg(selection: BetBuilderSelection, index: number): Leg {
+  const confidence = clampPct(selection.confidence ?? 50);
+  return {
+    key: selection.key ?? `leg-${index}`,
+    label: selection.label_fr ?? selection.label ?? "Selection IA",
+    cat: selection.category ?? "Marche",
+    odds: selection.odds && selection.odds > 1 ? selection.odds : fairOdds(confidence),
+    confidence,
+    bookmaker: selection.bookmaker || undefined,
+  };
+}
+
+function heuristicLegs(m: Match): Leg[] {
+  const pr = m.probs ?? { p1: 33, pn: 33, p2: 33 };
+  const st = m.stats ?? {};
+  const fav = pr.p1 >= pr.p2 ? "home" : "away";
+  const favTeam = fav === "home" ? m.homeTeam : m.awayTeam;
+  const favProb = Math.max(pr.p1, pr.p2);
+  const favOdds = fav === "home" ? (m.odds?.h ?? m.odds?.home) : (m.odds?.a ?? m.odds?.away);
+  const dcConfidence = clampPct(favProb + pr.pn);
+  const over15 = clampPct(st.over15_pct ?? 0);
+  const over25 = clampPct(st.over25_pct ?? 0);
+  const btts = clampPct(st.btts_pct ?? 0);
+  const predictedGoals = st.predicted_goals ?? 2.5;
+  const legs: Leg[] = [];
+
+  if (dcConfidence >= 68) {
+    legs.push({ key: "dc", label: `Double chance ${fav === "home" ? "1N" : "N2"}`, cat: "Double chance", confidence: dcConfidence, odds: fairOdds(dcConfidence, 0.93) });
+  }
+  if (over15 >= 72) {
+    legs.push({ key: "over_15", label: "Plus de 1.5 buts", cat: "Total match", confidence: over15, odds: fairOdds(over15, 0.95) });
+  } else if (predictedGoals <= 2.4) {
+    const under35Confidence = clampPct(72 + (2.4 - predictedGoals) * 8);
+    legs.push({ key: "under_35", label: "Moins de 3.5 buts", cat: "Total match", confidence: under35Confidence, odds: fairOdds(under35Confidence, 0.94) });
+  }
+  if (over25 >= 56) {
+    legs.push({ key: "over_25", label: "Plus de 2.5 buts", cat: "Total match", confidence: over25, odds: fairOdds(over25, 0.96) });
+  }
+  if (btts >= 56) {
+    legs.push({ key: "btts_yes", label: "Les deux marquent", cat: "BTTS", confidence: btts, odds: fairOdds(btts, 0.96) });
+  } else if (btts <= 44) {
+    const noBttsConfidence = 100 - btts;
+    legs.push({ key: "btts_no", label: "Au moins une equipe ne marque pas", cat: "BTTS", confidence: noBttsConfidence, odds: fairOdds(noBttsConfidence, 0.96) });
+  }
+  if (favProb >= 50) {
+    legs.push({ key: "fav_win", label: `Victoire ${favTeam}`, cat: "1N2", confidence: favProb, odds: favOdds ?? fairOdds(favProb, 0.98) });
+  }
+  if (pr.pn >= 33) {
+    legs.push({ key: "draw", label: "Match nul", cat: "1N2", confidence: pr.pn, odds: m.odds?.d ?? m.odds?.draw ?? fairOdds(pr.pn, 0.98) });
+  }
+
+  return legs.sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+}
+
+function buildRealCombos(m: Match): Combo[] {
+  const backendSelections = m.betBuilder?.selections?.map(backendLeg).filter((leg) => (leg.confidence ?? 0) >= 40) ?? [];
+  const sourceLegs = backendSelections.length > 0 ? backendSelections : heuristicLegs(m);
+  if (sourceLegs.length === 0) return [];
+
+  const safeLegs = sourceLegs.filter((leg) => (leg.confidence ?? 0) >= 65).slice(0, Math.min(2, sourceLegs.length));
+  const balancedLegs = sourceLegs.slice(0, Math.min(3, sourceLegs.length));
+  const boldLegs = sourceLegs.slice(0, Math.min(4, sourceLegs.length));
+
+  const combos = [
+    makeRealCombo("safe", "safe", safeLegs.length > 0 ? safeLegs : sourceLegs.slice(0, 1)),
+    makeRealCombo("balanced", "balanced", balancedLegs),
+    makeRealCombo("bold", "bold", boldLegs, m.betBuilder?.combined_confidence, m.betBuilder?.combined_odds),
+  ].filter(Boolean) as Combo[];
+
+  const seen = new Set<string>();
+  return combos.filter((combo) => {
+    const sig = combo.legs.map((leg) => leg.key ?? leg.label).join("|");
+    if (seen.has(sig)) return false;
+    seen.add(sig);
+    return true;
   });
 }
 
@@ -83,7 +200,11 @@ function AIComboCard({ combo }: { combo: Combo }) {
             }}>{i + 1}</div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35 }}>{leg.label}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{leg.cat}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                {leg.cat}
+                {leg.confidence ? ` · ${Math.round(leg.confidence)}%` : ""}
+                {leg.bookmaker ? ` · ${leg.bookmaker}` : ""}
+              </div>
             </div>
             <div className="mono tabular" style={{ fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{leg.odds?.toFixed(2) ?? "—"}</div>
           </div>
