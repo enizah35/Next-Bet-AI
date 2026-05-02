@@ -33,7 +33,7 @@ export default function XGMethodologyPage() {
             C'est l'indicateur le plus puissant à ce jour pour prédire le momentum d'un club.
           </p>
 
-          <div style={{ background: 'url(/assets/noise.png), linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9))', padding: '2rem', borderRadius: '16px', border: '1px solid var(--glass-border)', marginTop: '1rem' }}>
+          <div style={{ background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9))', padding: '2rem', borderRadius: '16px', border: '1px solid var(--glass-border)', marginTop: '1rem' }}>
             <h3 style={{ color: 'white', marginBottom: '1rem', fontSize: '1.3rem' }}>L'intégration dans PyTorch</h3>
             <p style={{ color: '#cbd5e1' }}>
               Le réseau neuronal de notre <Link href="/resources/model" style={{color: 'var(--color-accent)'}}>système central</Link> reçoit ces données normalisées via un StandardScaler. L'IA apprend ainsi à reconnaître des clubs sous-performants (qui ont un gros xG mais n'arrivent pas encore à marquer) avant que le marché des bookmakers ne s'en rende compte.

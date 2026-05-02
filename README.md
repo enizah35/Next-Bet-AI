@@ -22,7 +22,7 @@ Le deploiement public est volontairement mis de cote pour l'instant. L'objectif 
 | Couche | Technologie |
 |---|---|
 | Frontend | Next.js 16, React 19, TypeScript |
-| UI | CSS custom, composants internes, Framer Motion |
+| UI | CSS custom, composants internes |
 | Backend | FastAPI, Uvicorn, Pydantic |
 | Base de donnees | PostgreSQL via Supabase, SQLAlchemy |
 | Ingestion | football-data.co.uk, ESPN, Open-Meteo, RSS, API-Football optionnel |
@@ -45,8 +45,7 @@ next-bet-ai/
     ingestion/              Historique, live data, cotes, blessures
     features/               Feature engineering et bet builder
     model/                  Entrainement, inference, checkpoints
-  scripts/                  Migrations et scripts utilitaires
-  dags/                     Pipeline planifiable
+  scripts/                  Migrations, ingestion avancee et scripts utilitaires
 ```
 
 ## Ligues couvertes
@@ -80,6 +79,10 @@ Creer un fichier `.env` a la racine :
 DB_URL_POOLER=postgresql://...
 API_FOOTBALL_KEY=...
 ODDS_API_KEY=...
+API_FOOTBALL_FIXTURES_IN_FAST=true
+LIVE_INJURIES_IN_FAST=true
+LIVE_SQUADS_IN_FAST=true
+LIVE_LINEUPS_LOOKAHEAD_HOURS=4
 STRIPE_SECRET_KEY=...
 STRIPE_WEBHOOK_SECRET=...
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
@@ -96,7 +99,8 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=...
 Notes :
 
 - `DB_URL_POOLER` est recommande avec Supabase.
-- `API_FOOTBALL_KEY` sert aux blessures/effectifs.
+- `API_FOOTBALL_KEY` sert aux fixtures, blessures, effectifs et compos officielles proches du coup d'envoi.
+- `LIVE_LINEUPS_LOOKAHEAD_HOURS` limite les appels compos officielles pour preserver le quota API-Football.
 - `ODDS_API_KEY` active les vraies cotes live. Sans cette cle, l'app utilise un proxy Elo et des cotes estimees.
 - Ne jamais commiter les fichiers `.env`.
 

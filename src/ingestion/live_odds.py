@@ -10,7 +10,7 @@ import os
 import json
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 
@@ -42,6 +42,23 @@ LEAGUE_KEYS = {
     "Scottish Premiership": "soccer_spl",
 }
 SNAPSHOT_PATH = Path(os.getenv("LIVE_ODDS_SNAPSHOT_PATH", "scripts/live_odds_snapshot.json"))
+FETCH_DOUBLE_CHANCE = os.getenv("ODDS_FETCH_DOUBLE_CHANCE", "1").lower() not in ("0", "false", "no")
+MAX_DOUBLE_CHANCE_EVENTS = int(os.getenv("ODDS_DOUBLE_CHANCE_MAX_EVENTS", "30"))
+LIVE_ODDS_CACHE_TTL_SECONDS = int(os.getenv("LIVE_ODDS_CACHE_TTL_SECONDS", "180"))
+
+_live_odds_cache: dict[str, tuple[float, dict[tuple[str, str], dict]]] = {}
+_bookmaker_odds_cache: dict[str, tuple[float, dict[tuple[str, str], dict]]] = {}
+
+
+def _cache_get(cache: dict[str, tuple[float, dict[tuple[str, str], dict]]], league: str) -> dict[tuple[str, str], dict] | None:
+    cached = cache.get(league)
+    if cached and time.time() - cached[0] < LIVE_ODDS_CACHE_TTL_SECONDS:
+        return cached[1]
+    return None
+
+
+def _cache_set(cache: dict[str, tuple[float, dict[tuple[str, str], dict]]], league: str, data: dict[tuple[str, str], dict]) -> None:
+    cache[league] = (time.time(), data)
 
 # Alias pour matcher les noms ESPN/DB → noms The Odds API
 TEAM_NAME_MAP = {
@@ -167,6 +184,10 @@ def fetch_live_odds(league: str) -> dict[tuple[str, str], dict]:
         }
     """
     sport_key = LEAGUE_KEYS.get(league)
+    cached = _cache_get(_live_odds_cache, league)
+    if cached is not None:
+        logger.info(f"Cotes live: cache TTL pour {league} ({len(cached)} matchs)")
+        return cached
     if not sport_key:
         logger.warning(f"Ligue non supportée pour les cotes: {league}")
         return {}
@@ -259,6 +280,7 @@ def fetch_live_odds(league: str) -> dict[tuple[str, str], dict]:
         }
 
     _attach_odds_movement(league, results)
+    _cache_set(_live_odds_cache, league, results)
     logger.info(f"Cotes live: {len(results)} matchs récupérés pour {league}")
     return results
 
@@ -293,6 +315,79 @@ BROKER_KEYS = ["winamax", "betclic"]
 BROKER_DISPLAY = {"winamax": "Winamax", "betclic": "Betclic"}
 
 
+def _name_has_team(outcome_name: str, team_name: str) -> bool:
+    return _normalize_team(team_name).lower() in _normalize_team(outcome_name).lower()
+
+
+def _parse_double_chance_outcomes(
+    outcomes: list[dict[str, Any]],
+    home_api: str,
+    away_api: str,
+) -> dict[str, float]:
+    parsed: dict[str, float] = {}
+    for outcome in outcomes:
+        name = str(outcome.get("name") or "")
+        price = outcome.get("price", 0)
+        if not isinstance(price, (int, float)) or price <= 0:
+            continue
+
+        name_lower = name.lower()
+        has_draw = "draw" in name_lower
+        has_home = _name_has_team(name, home_api)
+        has_away = _name_has_team(name, away_api)
+
+        if has_home and has_draw and not has_away:
+            parsed["home_draw"] = round(price, 2)
+        elif has_away and has_draw and not has_home:
+            parsed["draw_away"] = round(price, 2)
+        elif has_home and has_away and not has_draw:
+            parsed["home_away"] = round(price, 2)
+
+    return parsed
+
+
+def _fetch_event_double_chance(
+    sport_key: str,
+    event_id: str,
+    home_api: str,
+    away_api: str,
+) -> dict[str, dict[str, float]]:
+    if not event_id:
+        return {}
+
+    url = f"{ODDS_API_BASE}/{sport_key}/events/{event_id}/odds"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": "eu",
+        "markets": "double_chance",
+        "oddsFormat": "decimal",
+    }
+
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code in (401, 422, 429):
+            logger.debug("Double chance indisponible event=%s status=%s", event_id, resp.status_code)
+            return {}
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.debug("Erreur double chance event=%s: %s", event_id, e)
+        return {}
+
+    double_chance: dict[str, dict[str, float]] = {}
+    for bm in data.get("bookmakers", []) or []:
+        bm_key = bm.get("key", "")
+        bm_name = BROKER_DISPLAY.get(bm_key, bm.get("title") or bm_key)
+        for market in bm.get("markets", []) or []:
+            if market.get("key") != "double_chance":
+                continue
+            parsed = _parse_double_chance_outcomes(market.get("outcomes", []) or [], home_api, away_api)
+            if parsed:
+                double_chance[bm_name] = parsed
+
+    return double_chance
+
+
 def fetch_bookmaker_odds(league: str) -> dict[tuple[str, str], dict]:
     """
     Récupère les cotes multi-marchés de Winamax & Betclic via The Odds API.
@@ -306,6 +401,10 @@ def fetch_bookmaker_odds(league: str) -> dict[tuple[str, str], dict]:
         }
     """
     sport_key = LEAGUE_KEYS.get(league)
+    cached = _cache_get(_bookmaker_odds_cache, league)
+    if cached is not None:
+        logger.info(f"Cotes bookmaker multi-market: cache TTL pour {league} ({len(cached)} matchs)")
+        return cached
     if not sport_key:
         return {}
     if not ODDS_API_KEY:
@@ -335,6 +434,7 @@ def fetch_bookmaker_odds(league: str) -> dict[tuple[str, str], dict]:
         return {}
 
     results: dict[tuple[str, str], dict] = {}
+    double_chance_fetches = 0
 
     for event in data:
         home_api = event.get("home_team", "")
@@ -342,7 +442,7 @@ def fetch_bookmaker_odds(league: str) -> dict[tuple[str, str], dict]:
         home_db = _normalize_team(home_api)
         away_db = _normalize_team(away_api)
 
-        match_data: dict = {"h2h": {}, "totals": {}, "btts": {}}
+        match_data: dict = {"h2h": {}, "double_chance": {}, "totals": {}, "btts": {}}
 
         for bm in event.get("bookmakers", []):
             bm_key = bm.get("key", "")
@@ -395,11 +495,21 @@ def fetch_bookmaker_odds(league: str) -> dict[tuple[str, str], dict]:
                             "no": round(no, 2),
                         }
 
+        if FETCH_DOUBLE_CHANCE and double_chance_fetches < MAX_DOUBLE_CHANCE_EVENTS:
+            double_chance_fetches += 1
+            match_data["double_chance"] = _fetch_event_double_chance(
+                sport_key,
+                event.get("id", ""),
+                home_api,
+                away_api,
+            )
+
         # Ne garder que si au moins un bookmaker a des données
         if any(match_data[k] for k in match_data):
             results[(home_db, away_db)] = match_data
 
     logger.info(f"Cotes bookmaker multi-market: {len(results)} matchs pour {league}")
+    _cache_set(_bookmaker_odds_cache, league, results)
     return results
 
 

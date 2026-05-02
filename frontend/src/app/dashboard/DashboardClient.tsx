@@ -7,9 +7,12 @@ import { Card } from "@/components/ui/Card";
 import { Tag } from "@/components/ui/Tag";
 import { Segmented } from "@/components/ui/Segmented";
 import { LeagueSelect } from "@/components/ui/LeagueSelect";
+import { DropdownSelect } from "@/components/ui/DropdownSelect";
 import { ProbBar } from "@/components/ui/ProbBar";
 import { TeamLogo } from "@/components/TeamLogo";
 import { I } from "@/components/Icons";
+import { LiveStatusPill } from "@/components/LiveStatusPill";
+import { useLiveMatches, type MatchLiveStatus } from "@/hooks/useLiveMatches";
 
 type Match = {
   id: number; competition: string; league: string; date: string;
@@ -21,36 +24,112 @@ type Match = {
   stats?: { btts_pct?: number; over25_pct?: number; over15_pct?: number; home_form?: string[]; away_form?: string[]; predicted_goals?: number; predicted_corners?: number; predicted_cards?: number };
   details?: { homeElo?: number; awayElo?: number; homeDaysRest?: number; awayDaysRest?: number; weatherCode?: number };
   injuries?: string[];
+  liveStatus?: MatchLiveStatus;
+};
+
+type SortKey =
+  | "date_asc"
+  | "date_desc"
+  | "odds_desc"
+  | "confidence_desc"
+  | "value_edge_desc"
+  | "league_asc";
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "date_asc", label: "Date proche" },
+  { value: "date_desc", label: "Date lointaine" },
+  { value: "odds_desc", label: "Cote élevée" },
+  { value: "confidence_desc", label: "Confiance max" },
+  { value: "value_edge_desc", label: "Value edge" },
+  { value: "league_asc", label: "Ligue A-Z" },
+];
+
+const matchTime = (match: Match) => {
+  const time = new Date(match.date).getTime();
+  return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
+};
+
+const confidenceProb = (match: Match) => Math.max(match.probs?.p1 ?? 0, match.probs?.pn ?? 0, match.probs?.p2 ?? 0);
+const valueEdge = (match: Match) => (match.valueBet?.active ? match.valueBet?.edge ?? 0 : -1);
+const leagueName = (match: Match) => match.league ?? match.competition ?? "";
+
+const getMarketOdd = (match: Match, key: "h" | "d" | "a") => {
+  const legacy = key === "h" ? "home" : key === "d" ? "draw" : "away";
+  return match.odds?.[key] ?? match.odds?.[legacy];
+};
+
+const maxMatchOdd = (match: Match) => {
+  const odds = [
+    getMarketOdd(match, "h"),
+    getMarketOdd(match, "d"),
+    getMarketOdd(match, "a"),
+    match.valueBet?.bestOdds,
+  ].filter((odd): odd is number => typeof odd === "number" && Number.isFinite(odd));
+  return odds.length ? Math.max(...odds) : -1;
+};
+
+const valueBetMarket = (match: Match) => {
+  const selection = match.valueBet?.selection;
+  const target = match.valueBet?.target?.toUpperCase();
+  if (selection === "Home" || target === "1") return "home";
+  if (selection === "Away" || target === "2") return "away";
+  if (selection === "Draw" || target === "N" || target === "X") return "draw";
+  if (target === "1N" || target === "1X") return "home_draw";
+  if (target === "N2" || target === "X2") return "draw_away";
+  return "home";
+};
+
+const getValueBetOdd = (match: Match) => {
+  if (match.valueBet?.bestOdds) return match.valueBet.bestOdds;
+  const market = valueBetMarket(match);
+  if (market === "home") return getMarketOdd(match, "h");
+  if (market === "draw") return getMarketOdd(match, "d");
+  if (market === "away") return getMarketOdd(match, "a");
+};
+
+const getValueBetFairOdd = (match: Match) => {
+  const market = valueBetMarket(match);
+  const prob =
+    market === "home" ? match.probs?.p1 :
+    market === "draw" ? match.probs?.pn :
+    market === "away" ? match.probs?.p2 :
+    market === "home_draw" ? (match.probs?.p1 ?? 0) + (match.probs?.pn ?? 0) :
+    market === "draw_away" ? (match.probs?.pn ?? 0) + (match.probs?.p2 ?? 0) :
+    0;
+  return prob > 0 ? 100 / prob : undefined;
 };
 
 const getValueBetLabel = (match: Match) => {
-  const selection = match.valueBet?.selection;
-  const target = match.valueBet?.target;
-  if (selection === "Home" || target === "1") return match.homeTeam;
-  if (selection === "Away" || target === "2") return match.awayTeam;
-  if (selection === "Draw" || target === "N") return "Match nul";
+  const market = valueBetMarket(match);
+  if (market === "home") return match.homeTeam;
+  if (market === "away") return match.awayTeam;
+  if (market === "draw") return "Match nul";
+  if (market === "home_draw") return `${match.homeTeam} ou Nul`;
+  if (market === "draw_away") return `${match.awayTeam} ou Nul`;
   return match.recommendation ?? "Sélection IA";
 };
 
 function ValueBetHero({ match, onClick }: { match: Match; onClick: () => void }) {
   const edge = match.valueBet?.edge ?? 0;
+  const displayedOdd = getValueBetOdd(match);
+  const fairOdd = getValueBetFairOdd(match);
   const dateFmt = new Date(match.date).toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
   return (
-    <Card onClick={onClick} pad={0} style={{ overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr" }}>
-        <div style={{ padding: 32 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+    <Card className="value-hero-card" onClick={onClick} pad={0} style={{ overflow: "hidden" }}>
+      <div className="value-hero-grid" style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr" }}>
+        <div className="value-hero-main" style={{ padding: 32 }}>
+          <div className="value-hero-meta" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
             <Tag size="sm">{match.competition}</Tag>
             <span className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>{dateFmt}</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28 }}>
+          <div className="matchup-row" style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
               <TeamLogo name={match.homeTeam} size={44} />
-              <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{match.homeTeam}</div>
+              <div className="value-hero-team-name" style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{match.homeTeam}</div>
             </div>
             <div className="mono" style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>VS</div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, justifyContent: "flex-end", minWidth: 0 }}>
-              <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{match.awayTeam}</div>
+              <div className="value-hero-team-name" style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{match.awayTeam}</div>
               <TeamLogo name={match.awayTeam} size={44} />
             </div>
           </div>
@@ -61,16 +140,16 @@ function ValueBetHero({ match, onClick }: { match: Match; onClick: () => void })
             <span className="mono tabular" style={{ fontSize: 12, color: "var(--acc-away)", fontWeight: 600 }}>2 · {match.probs.p2}%</span>
           </div>
         </div>
-        <div style={{ padding: 32, background: "var(--value-tint)", display: "flex", flexDirection: "column", justifyContent: "center", gap: 12 }}>
+        <div className="value-hero-panel" style={{ padding: 32, background: "var(--value-tint)", display: "flex", flexDirection: "column", justifyContent: "center", gap: 12 }}>
           <div className="overline">Edge détecté</div>
-          <div className="mono tabular" style={{ fontSize: 52, fontWeight: 600, letterSpacing: "-0.04em", lineHeight: 0.9, color: "var(--value)" }}>
+          <div className="mono tabular value-hero-edge" style={{ fontSize: 52, fontWeight: 600, letterSpacing: "-0.04em", lineHeight: 0.9, color: "var(--value)" }}>
             +{edge}%
           </div>
           <div style={{ fontSize: 14, fontWeight: 500 }}>
             Parier sur <span style={{ color: "var(--value)" }}>{getValueBetLabel(match)}</span>
           </div>
           <div style={{ fontSize: 12, color: "var(--text-soft)" }}>
-            Cote {match.odds?.h?.toFixed(2) ?? "—"}{match.valueBet?.bookmaker && ` sur ${match.valueBet.bookmaker}`} · Juste {match.probs?.p1 ? (100 / match.probs.p1).toFixed(2) : "—"}
+            Cote {displayedOdd?.toFixed(2) ?? "—"}{match.valueBet?.bookmaker && ` sur ${match.valueBet.bookmaker}`} · Juste {fairOdd?.toFixed(2) ?? "—"}
           </div>
         </div>
       </div>
@@ -81,7 +160,7 @@ function ValueBetHero({ match, onClick }: { match: Match; onClick: () => void })
 function MatchListView({ matches, onOpen }: { matches: Match[]; onOpen: (m: Match) => void }) {
   return (
     <Card pad={0}>
-      <div style={{ display: "grid", gridTemplateColumns: "180px 1fr 200px 100px 40px", padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "var(--bg-inset)" }}>
+      <div className="mobile-list-header" style={{ display: "grid", gridTemplateColumns: "180px 1fr 200px 100px 40px", padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "var(--bg-inset)" }}>
         {["Date", "Match", "Probabilités", "Value", ""].map((h, i) => (
           <div key={i} className="overline">{h}</div>
         ))}
@@ -90,6 +169,7 @@ function MatchListView({ matches, onOpen }: { matches: Match[]; onOpen: (m: Matc
         <div
           key={m.id}
           onClick={() => onOpen(m)}
+          className="mobile-list-row"
           style={{
             display: "grid", gridTemplateColumns: "180px 1fr 200px 100px 40px",
             padding: "16px 20px", alignItems: "center", gap: 12,
@@ -102,14 +182,14 @@ function MatchListView({ matches, onOpen }: { matches: Match[]; onOpen: (m: Matc
           <div className="mono" style={{ fontSize: 12, color: "var(--text-soft)" }}>
             {new Date(m.date).toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div className="mobile-match-line" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <TeamLogo name={m.homeTeam} size={24} />
-            <span style={{ fontSize: 13, fontWeight: 500 }}>{m.homeTeam}</span>
+            <span className="mobile-match-team" style={{ fontSize: 13, fontWeight: 500 }}>{m.homeTeam}</span>
             <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>vs</span>
             <TeamLogo name={m.awayTeam} size={24} />
-            <span style={{ fontSize: 13, fontWeight: 500 }}>{m.awayTeam}</span>
+            <span className="mobile-match-team" style={{ fontSize: 13, fontWeight: 500 }}>{m.awayTeam}</span>
           </div>
-          <div>
+          <div className="mobile-list-probs">
             <ProbBar p1={m.probs.p1} pn={m.probs.pn} p2={m.probs.p2} height={6} />
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
               {[m.probs.p1, m.probs.pn, m.probs.p2].map((p, j) => (
@@ -117,7 +197,7 @@ function MatchListView({ matches, onOpen }: { matches: Match[]; onOpen: (m: Matc
               ))}
             </div>
           </div>
-          <div>
+          <div className="mobile-list-value">
             {m.valueBet?.active ? (
               <span className="mono tabular" style={{ fontSize: 14, fontWeight: 600, color: "var(--value)" }}>+{m.valueBet.edge}%</span>
             ) : (
@@ -134,17 +214,33 @@ function MatchListView({ matches, onOpen }: { matches: Match[]; onOpen: (m: Matc
 export default function DashboardClient({ initialMatches = [] }: { initialMatches: Match[] }) {
   const [league, setLeague] = useState("all");
   const [view, setView] = useState("cards");
+  const [sort, setSort] = useState<SortKey>("date_asc");
   const [openedMatch, setOpenedMatch] = useState<Match | null>(null);
+  const { matches: liveMatches, state: liveState } = useLiveMatches<Match>(initialMatches, 40);
 
   const availableLeagues = useMemo(() => {
     const seen = new Set<string>();
-    return initialMatches.map((m) => m.league ?? m.competition).filter((l) => l && !seen.has(l) && seen.add(l));
-  }, [initialMatches]);
+    return liveMatches.map((m) => m.league ?? m.competition).filter((l) => l && !seen.has(l) && seen.add(l));
+  }, [liveMatches]);
 
   const filtered = useMemo(() =>
-    league === "all" ? initialMatches : initialMatches.filter((m) => (m.league ?? m.competition) === league),
-    [initialMatches, league]
+    league === "all" ? liveMatches : liveMatches.filter((m) => (m.league ?? m.competition) === league),
+    [liveMatches, league]
   );
+
+  const sortedMatches = useMemo(() => {
+    const byDateAsc = (a: Match, b: Match) => matchTime(a) - matchTime(b);
+    return [...filtered].sort((a, b) => {
+      let diff = 0;
+      if (sort === "date_asc") diff = byDateAsc(a, b);
+      if (sort === "date_desc") diff = matchTime(b) - matchTime(a);
+      if (sort === "odds_desc") diff = maxMatchOdd(b) - maxMatchOdd(a);
+      if (sort === "confidence_desc") diff = confidenceProb(b) - confidenceProb(a);
+      if (sort === "value_edge_desc") diff = valueEdge(b) - valueEdge(a);
+      if (sort === "league_asc") diff = leagueName(a).localeCompare(leagueName(b), "fr");
+      return diff || byDateAsc(a, b) || a.id - b.id;
+    });
+  }, [filtered, sort]);
 
   const valueBets = useMemo(() =>
     filtered.filter((m) => m.valueBet?.active).sort((a, b) => (b.valueBet?.edge ?? 0) - (a.valueBet?.edge ?? 0)),
@@ -155,24 +251,28 @@ export default function DashboardClient({ initialMatches = [] }: { initialMatche
 
   return (
     <AppShell>
-      <div style={{ padding: "0 40px 80px" }}>
+      <div className="app-page">
         <PageHeader
           overline={today}
           title="Analyses"
           subtitle={`${filtered.length} matchs à venir. ${valueBets.length} value bet${valueBets.length > 1 ? "s" : ""} détecté${valueBets.length > 1 ? "s" : ""}.`}
           actions={
-            <Segmented
-              value={view}
-              onChange={setView}
-              options={[
-                { value: "cards", icon: <I.Grid size={15} /> },
-                { value: "list", icon: <I.List size={15} /> },
-              ]}
-            />
+            <>
+              <LiveStatusPill state={liveState} />
+              <Segmented
+                className="dashboard-view-toggle"
+                value={view}
+                onChange={setView}
+                options={[
+                  { value: "cards", icon: <I.Grid size={15} /> },
+                  { value: "list", icon: <I.List size={15} /> },
+                ]}
+              />
+            </>
           }
         />
 
-        {initialMatches.length === 0 ? (
+        {liveMatches.length === 0 ? (
           <div style={{ padding: "80px 0", textAlign: "center" }}>
             <div className="mono" style={{ fontSize: 14, color: "var(--text-muted)" }}>Aucune analyse trouvée ou impossible de charger les données.</div>
           </div>
@@ -189,13 +289,28 @@ export default function DashboardClient({ initialMatches = [] }: { initialMatche
             )}
 
             {/* All matches */}
-            <section style={{ padding: "8px 0" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <h2 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.015em" }}>
+            <section className="analysis-list-section" style={{ padding: "8px 0" }}>
+              <div className="analysis-list-top" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
+                <h2 className="analysis-list-title" style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.015em" }}>
                   Tous les matchs
                   <span className="mono" style={{ marginLeft: 10, color: "var(--text-muted)", fontSize: 14, fontWeight: 400 }}>{filtered.length}</span>
                 </h2>
-                <LeagueSelect value={league} onChange={setLeague} leagues={availableLeagues} />
+                <div className="analysis-controls" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <label className="analysis-control" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="overline" style={{ color: "var(--text-muted)" }}>Tri</span>
+                    <DropdownSelect
+                      value={sort}
+                      onChange={(nextSort) => setSort(nextSort as SortKey)}
+                      options={SORT_OPTIONS}
+                      minWidth={202}
+                      ariaLabel="Trier les analyses"
+                    />
+                  </label>
+                  <label className="analysis-control" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="overline" style={{ color: "var(--text-muted)" }}>Ligue</span>
+                    <LeagueSelect value={league} onChange={setLeague} leagues={availableLeagues} />
+                  </label>
+                </div>
               </div>
 
               {filtered.length === 0 ? (
@@ -203,13 +318,13 @@ export default function DashboardClient({ initialMatches = [] }: { initialMatche
                   Aucun match disponible pour cette sélection.
                 </div>
               ) : view === "cards" ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
-                  {filtered.map((m) => (
+                <div className="match-card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))", gap: 16 }}>
+                  {sortedMatches.map((m) => (
                     <MatchCard key={m.id} match={m} onClick={() => setOpenedMatch(m)} />
                   ))}
                 </div>
               ) : (
-                <MatchListView matches={filtered} onOpen={(m) => setOpenedMatch(m)} />
+                <MatchListView matches={sortedMatches} onOpen={(m) => setOpenedMatch(m)} />
               )}
             </section>
           </>

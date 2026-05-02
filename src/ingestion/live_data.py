@@ -19,7 +19,8 @@ from src.database.database import get_session
 from src.database.models import Team
 
 logger: logging.Logger = logging.getLogger(__name__)
-LIVE_ODDS_IN_FAST = os.getenv("LIVE_ODDS_IN_FAST", "true").lower() == "true"
+LIVE_ODDS_IN_FAST = os.getenv("LIVE_ODDS_IN_FAST", "false").lower() == "true"
+API_FOOTBALL_FIXTURES_IN_FAST = os.getenv("API_FOOTBALL_FIXTURES_IN_FAST", "false").lower() == "true"
 
 # Coordinates mapping for demo/weather
 STADIUM_COORDS = {
@@ -212,6 +213,24 @@ def enrich_pipeline(league: str, fast: bool = False) -> list[dict]:
     """Exécute le pipeline live data. En mode fast, évite les appels externes secondaires."""
     logger.info(f"--- Démarrage Pipeline Live Data pour {league} (fast={fast}) ---")
     matches = get_upcoming_matches(league, use_db_fallback=not fast)
+
+    # Resolve API-Football fixture ids once per league. This enables fixture
+    # injuries and official lineups in the prediction step.
+    if matches and (not fast or API_FOOTBALL_FIXTURES_IN_FAST):
+        try:
+            from src.ingestion.api_football import attach_fixture_ids
+
+            matches = attach_fixture_ids(matches, league)
+            resolved = sum(1 for match in matches if match.get("fixtureId"))
+            if resolved:
+                logger.info(
+                    "API-Football fixtures: %s/%s matches resolved for %s",
+                    resolved,
+                    len(matches),
+                    league,
+                )
+        except Exception as exc:
+            logger.debug("API-Football fixture resolution skipped (%s): %s", league, exc)
     
     enriched = []
     
@@ -273,6 +292,10 @@ def enrich_pipeline(league: str, fast: bool = False) -> list[dict]:
             "homeTeam": ht,
             "awayTeam": at,
             "date": m["dateStr"],
+            "fixtureId": m.get("fixtureId"),
+            "apiHomeTeamId": m.get("apiHomeTeamId"),
+            "apiAwayTeamId": m.get("apiAwayTeamId"),
+            "apiFootballFixture": m.get("apiFootballFixture") or {},
             "weatherCode": weather_code,
             "injuriesHome": home_news,
             "injuriesAway": away_news,

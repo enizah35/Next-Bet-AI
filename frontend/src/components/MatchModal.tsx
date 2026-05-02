@@ -7,6 +7,8 @@ import { Ring } from "./ui/Ring";
 import { FormDots } from "./ui/FormDots";
 import { I } from "./Icons";
 
+type PlayerStatus = string | { name?: string; reason?: string; type?: string };
+
 interface Match {
   id: number;
   competition: string;
@@ -26,6 +28,39 @@ interface Match {
     homeElo?: number; awayElo?: number;
     homeDaysRest?: number; awayDaysRest?: number;
     weatherCode?: number;
+    fixtureId?: number | string | null;
+    lineupsAvailable?: boolean;
+    injuriesSource?: string;
+    injuriesCountHome?: number;
+    injuriesCountAway?: number;
+    homeMissingPlayers?: PlayerStatus[];
+    awayMissingPlayers?: PlayerStatus[];
+  };
+  availability?: {
+    fixtureId?: number | string | null;
+    injuries?: {
+      source?: string;
+      home?: { count?: number; players?: PlayerStatus[] };
+      away?: { count?: number; players?: PlayerStatus[] };
+    };
+    homeSquad?: {
+      squad_score?: number;
+      available_count?: number;
+      total_count?: number;
+      lineup_confirmed?: boolean;
+      formation?: string | null;
+      missing_players?: PlayerStatus[];
+      starters?: PlayerStatus[];
+    };
+    awaySquad?: {
+      squad_score?: number;
+      available_count?: number;
+      total_count?: number;
+      lineup_confirmed?: boolean;
+      formation?: string | null;
+      missing_players?: PlayerStatus[];
+      starters?: PlayerStatus[];
+    };
   };
 }
 
@@ -37,14 +72,50 @@ const getOdd = (match: Match, key: "h" | "d" | "a") => {
   return match.odds?.[key] ?? match.odds?.[legacy];
 };
 
-const getFairOdd = (match: Match) => {
+const valueBetMarket = (match: Match) => {
   const selection = match.valueBet?.selection;
-  const target = match.valueBet?.target;
+  const target = match.valueBet?.target?.toUpperCase();
+  if (selection === "Home" || target === "1") return "home";
+  if (selection === "Away" || target === "2") return "away";
+  if (selection === "Draw" || target === "N" || target === "X") return "draw";
+  if (target === "1N" || target === "1X") return "home_draw";
+  if (target === "N2" || target === "X2") return "draw_away";
+  return "home";
+};
+
+const getValueBetOdd = (match: Match) => {
+  if (match.valueBet?.bestOdds) return match.valueBet.bestOdds;
+  const market = valueBetMarket(match);
+  if (market === "home") return getOdd(match, "h");
+  if (market === "draw") return getOdd(match, "d");
+  if (market === "away") return getOdd(match, "a");
+};
+
+const getValueBetLabel = (match: Match) => {
+  const market = valueBetMarket(match);
+  if (market === "home") return match.homeTeam;
+  if (market === "away") return match.awayTeam;
+  if (market === "draw") return "Match nul";
+  if (market === "home_draw") return `${match.homeTeam} ou Nul`;
+  if (market === "draw_away") return `${match.awayTeam} ou Nul`;
+  return match.recommendation ?? "Sélection IA";
+};
+
+const getFairOdd = (match: Match) => {
+  const market = valueBetMarket(match);
   const pct =
-    selection === "Away" || target === "2" ? match.probs.p2 :
-    selection === "Draw" || target === "N" ? match.probs.pn :
+    market === "away" ? match.probs.p2 :
+    market === "draw" ? match.probs.pn :
+    market === "home_draw" ? match.probs.p1 + match.probs.pn :
+    market === "draw_away" ? match.probs.pn + match.probs.p2 :
     match.probs.p1;
   return pct > 0 ? 100 / pct : undefined;
+};
+
+const playerLabel = (player: PlayerStatus) => {
+  if (typeof player === "string") return player;
+  const detail = player.reason || player.type;
+  return [player.name, detail].filter(Boolean).join(" - ");
 };
 
 export function MatchModal({ match, onClose }: { match: Match | null; onClose: () => void }) {
@@ -57,14 +128,23 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
   if (!match) return null;
 
   const { competition, date, homeTeam, awayTeam, probs, valueBet, stats, details } = match;
-  const displayedOdd = valueBet?.bestOdds ?? getOdd(match, "h");
+  const displayedOdd = getValueBetOdd(match);
   const fairOdd = getFairOdd(match);
   const fmt = new Date(date).toLocaleString("fr-FR", { weekday: "long", day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit" });
+  const availability = match.availability;
+  const homeSquad = availability?.homeSquad;
+  const awaySquad = availability?.awaySquad;
+  const homeMissing = details?.homeMissingPlayers ?? homeSquad?.missing_players ?? availability?.injuries?.home?.players ?? [];
+  const awayMissing = details?.awayMissingPlayers ?? awaySquad?.missing_players ?? availability?.injuries?.away?.players ?? [];
+  const homeInjuryCount = details?.injuriesCountHome ?? availability?.injuries?.home?.count ?? homeMissing.length;
+  const awayInjuryCount = details?.injuriesCountAway ?? availability?.injuries?.away?.count ?? awayMissing.length;
+  const lineupsAvailable = details?.lineupsAvailable || homeSquad?.lineup_confirmed || awaySquad?.lineup_confirmed;
+  const hasAvailability = Boolean(details?.fixtureId || availability?.fixtureId || homeInjuryCount || awayInjuryCount || lineupsAvailable);
 
   return (
     <div
       onClick={onClose}
-      className="fade-up"
+      className="fade-up modal-backdrop"
       style={{
         position: "fixed", inset: 0, zIndex: 200,
         background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)",
@@ -74,6 +154,7 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        className="match-modal"
         style={{
           background: "var(--bg-elev)", border: "1px solid var(--border)",
           borderRadius: 20, maxWidth: 720, width: "100%",
@@ -81,9 +162,11 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
           boxShadow: "var(--shadow-float)", position: "relative",
         }}
       >
+        <div className="modal-handle" aria-hidden="true" />
         {/* Close */}
         <button
           onClick={onClose}
+          className="modal-close-button"
           style={{
             position: "absolute", top: 16, right: 16, zIndex: 2,
             width: 32, height: 32, borderRadius: 10,
@@ -96,17 +179,17 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
         </button>
 
         {/* Header */}
-        <div style={{ padding: 28, borderBottom: "1px solid var(--border)" }}>
+        <div className="modal-section" style={{ padding: 28, borderBottom: "1px solid var(--border)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
             <Tag size="sm">{competition}</Tag>
             <span className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>{fmt}</span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1 }}>
+          <div className="modal-teams" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 0 }}>
               <TeamLogo name={homeTeam} size={52} />
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{homeTeam}</div>
+              <div style={{ minWidth: 0 }}>
+                <div className="modal-team-name" style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{homeTeam}</div>
                 <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
                   {details?.homeElo && `Elo ${details.homeElo}`}
                   {details?.homeDaysRest && ` · ${details.homeDaysRest}j repos`}
@@ -114,9 +197,9 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
               </div>
             </div>
             <div className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>VS</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1, justifyContent: "flex-end" }}>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{awayTeam}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1, justifyContent: "flex-end", minWidth: 0 }}>
+              <div style={{ textAlign: "right", minWidth: 0 }}>
+                <div className="modal-team-name" style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{awayTeam}</div>
                 <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
                   {details?.awayElo && `Elo ${details.awayElo}`}
                   {details?.awayDaysRest && ` · ${details.awayDaysRest}j repos`}
@@ -128,7 +211,7 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
         </div>
 
         {/* Body */}
-        <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 20 }}>
+        <div className="modal-body" style={{ padding: 28, display: "flex", flexDirection: "column", gap: 20 }}>
           {/* Value bet banner */}
           {valueBet?.active && (
             <div style={{ padding: 18, borderRadius: 14, background: "var(--value-tint)", border: "1px solid var(--value)" }}>
@@ -139,7 +222,7 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
                 </span>
               </div>
               <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.015em" }}>
-                {match.recommendation}
+                Parier sur {getValueBetLabel(match)}
               </div>
               <div style={{ fontSize: 13, color: "var(--text-soft)", marginTop: 4 }}>
                 Cote {displayedOdd?.toFixed(2) ?? "—"}{valueBet.bookmaker && ` sur ${valueBet.bookmaker}`} · cote juste : {fairOdd?.toFixed(2) ?? "—"}
@@ -167,7 +250,7 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
 
           {/* Rings */}
           {stats && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, justifyItems: "center" }}>
+            <div className="modal-rings" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, justifyItems: "center" }}>
               <Ring value={stats.btts_pct ?? 50} size={80} color="var(--acc-draw)" label="BTTS" />
               <Ring value={stats.over25_pct ?? 50} size={80} color="var(--good)" label="+ 2.5 buts" />
               <Ring value={stats.over15_pct ?? 65} size={80} color="var(--acc-home)" label="+ 1.5 but" />
@@ -176,13 +259,23 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
 
           {/* Form + weather */}
           {stats && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="modal-meta-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div style={{ padding: 16, background: "var(--bg-inset)", borderRadius: 12 }}>
-                <div className="overline" style={{ marginBottom: 10 }}>Forme</div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                  <FormDots form={stats.home_form ?? []} size={16} />
-                  <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>5</span>
-                  <FormDots form={stats.away_form ?? []} size={16} />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <div className="overline">Forme recente</div>
+                  <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>5 derniers</span>
+                </div>
+                <div className="modal-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 6, overflowWrap: "anywhere" }}>{homeTeam}</div>
+                    <FormDots form={stats.home_form ?? []} size={16} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 6, overflowWrap: "anywhere", textAlign: "right" }}>{awayTeam}</div>
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <FormDots form={stats.away_form ?? []} size={16} />
+                    </div>
+                  </div>
                 </div>
               </div>
               {details?.weatherCode && (
@@ -194,6 +287,55 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {hasAvailability && (
+            <div style={{ padding: 16, background: "var(--bg-inset)", borderRadius: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <I.Alert size={18} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
+                <div style={{ minWidth: 0 }}>
+                  <div className="overline">Disponibilites live</div>
+                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    {lineupsAvailable ? "Compos officielles detectees" : "Compos non publiees"}
+                    {(details?.fixtureId || availability?.fixtureId) && ` · fixture ${details?.fixtureId ?? availability?.fixtureId}`}
+                    {details?.injuriesSource && ` · ${details.injuriesSource}`}
+                  </div>
+                </div>
+              </div>
+
+              <div className="availability-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                {[
+                  { name: homeTeam, squad: homeSquad, missing: homeMissing, count: homeInjuryCount },
+                  { name: awayTeam, squad: awaySquad, missing: awayMissing, count: awayInjuryCount },
+                ].map(({ name, squad, missing, count }) => (
+                  <div key={name} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12, minWidth: 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, overflowWrap: "anywhere" }}>{name}</span>
+                      <span className="mono" style={{ fontSize: 11, color: count ? "var(--bad)" : "var(--good)" }}>
+                        {count} out
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
+                      {squad?.available_count && squad?.total_count
+                        ? `${squad.available_count}/${squad.total_count} disponibles`
+                        : "Effectif live partiel"}
+                      {squad?.formation && ` · ${squad.formation}`}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                      {missing.length > 0 ? (
+                        missing.slice(0, 4).map((player, i) => (
+                          <span key={`${name}-${i}`} style={{ fontSize: 12, color: "var(--text-soft)", overflowWrap: "anywhere" }}>
+                            {playerLabel(player)}
+                          </span>
+                        ))
+                      ) : (
+                        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Aucune absence confirmee</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

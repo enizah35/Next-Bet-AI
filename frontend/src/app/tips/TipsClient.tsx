@@ -5,6 +5,8 @@ import { MatchModal } from "@/components/MatchModal";
 import { Card } from "@/components/ui/Card";
 import { Tag } from "@/components/ui/Tag";
 import { I } from "@/components/Icons";
+import { LiveStatusPill } from "@/components/LiveStatusPill";
+import { useLiveMatches, type MatchLiveStatus } from "@/hooks/useLiveMatches";
 
 type Match = {
   id: number; competition: string; league: string; date: string;
@@ -16,6 +18,7 @@ type Match = {
   stats?: { btts_pct?: number; over25_pct?: number; over15_pct?: number; home_form?: string[]; away_form?: string[]; predicted_goals?: number; predicted_corners?: number; predicted_cards?: number };
   details?: { homeElo?: number; awayElo?: number; homeDaysRest?: number; awayDaysRest?: number; weatherCode?: number };
   injuries?: string[];
+  liveStatus?: MatchLiveStatus;
 };
 
 type Tip = {
@@ -58,8 +61,9 @@ const confColor = (c: number) => c >= 80 ? "var(--good)" : c >= 70 ? "var(--acc-
 
 export default function TipsClient({ initialMatches = [] }: { initialMatches: Match[] }) {
   const [openedMatch, setOpenedMatch] = useState<Match | null>(null);
+  const { matches: liveMatches, state: liveState } = useLiveMatches<Match>(initialMatches, 40);
 
-  const tips = useMemo(() => buildTips(initialMatches), [initialMatches]);
+  const tips = useMemo(() => buildTips(liveMatches), [liveMatches]);
   const top3 = tips.slice(0, 3);
   const rest = tips.slice(3);
 
@@ -67,14 +71,15 @@ export default function TipsClient({ initialMatches = [] }: { initialMatches: Ma
 
   return (
     <AppShell>
-      <div style={{ padding: "0 40px 80px" }}>
+      <div className="app-page">
         <PageHeader
           overline={today}
           title="Tips du jour"
+          actions={<LiveStatusPill state={liveState} />}
           subtitle={`${tips.length} paris recommandés, triés par fiabilité.`}
         />
 
-        {initialMatches.length === 0 ? (
+        {liveMatches.length === 0 ? (
           <div style={{ padding: "80px 0", textAlign: "center" }}>
             <div className="mono" style={{ fontSize: 14, color: "var(--text-muted)" }}>Aucun tip généré (pas de données).</div>
           </div>
@@ -85,11 +90,11 @@ export default function TipsClient({ initialMatches = [] }: { initialMatches: Ma
               <div className="overline" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
                 <I.Flame size={12} style={{ color: "var(--value)" }} /> Top 3
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
+              <div className="match-card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))", gap: 16 }}>
                 {top3.map((t, i) => {
                   const cs = catStyle(t.category);
                   return (
-                    <Card key={i} onClick={() => setOpenedMatch(t.match)}>
+                    <Card key={i} className="tips-top-card" onClick={() => setOpenedMatch(t.match)}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
                         <Tag color={cs.color} tint={cs.tint} size="sm">{t.category}</Tag>
                         <span className="mono tabular" style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.03em", color: confColor(t.confidence), lineHeight: 1 }}>
@@ -129,6 +134,7 @@ export default function TipsClient({ initialMatches = [] }: { initialMatches: Ma
                       <div
                         key={i}
                         onClick={() => setOpenedMatch(t.match)}
+                        className="tips-row"
                         style={{
                           display: "grid", gridTemplateColumns: "40px 110px 1fr 80px 80px 30px",
                           padding: "14px 20px", alignItems: "center", gap: 14,
@@ -138,15 +144,20 @@ export default function TipsClient({ initialMatches = [] }: { initialMatches: Ma
                         onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-inset)")}
                         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                       >
-                        <div className="mono" style={{ fontSize: 13, color: "var(--text-muted)" }}>#{i + 4}</div>
-                        <Tag color={cs.color} tint={cs.tint} size="sm">{t.category}</Tag>
+                        <div className="mono tips-row-rank" style={{ fontSize: 13, color: "var(--text-muted)" }}>#{i + 4}</div>
+                        <div className="tips-row-category">
+                          <Tag color={cs.color} tint={cs.tint} size="sm">{t.category}</Tag>
+                        </div>
                         <div>
                           <div style={{ fontSize: 14, fontWeight: 500 }}>{t.label}</div>
+                          <div className="tips-mobile-category">
+                            <Tag color={cs.color} tint={cs.tint} size="sm">{t.category}</Tag>
+                          </div>
                           <div style={{ fontSize: 12, color: "var(--text-soft)", marginTop: 2 }}>{t.match.homeTeam} vs {t.match.awayTeam}</div>
                         </div>
                         <div className="mono tabular" style={{ fontSize: 14, fontWeight: 600, color: confColor(t.confidence), textAlign: "right" }}>{t.confidence}%</div>
                         <div className="mono tabular" style={{ fontSize: 14, fontWeight: 600, textAlign: "right" }}>{t.odds?.toFixed(2) ?? "—"}</div>
-                        <I.Chevron size={14} style={{ color: "var(--text-muted)" }} />
+                        <I.Chevron className="tips-row-chevron" size={14} style={{ color: "var(--text-muted)" }} />
                       </div>
                     );
                   })}

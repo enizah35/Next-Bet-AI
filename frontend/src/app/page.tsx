@@ -50,7 +50,7 @@ export default function LandingPage() {
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
       {/* Nav */}
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px", display: "flex", justifyContent: "space-between", alignItems: "center", height: 64 }}>
+      <div className="landing-nav" style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px", display: "flex", justifyContent: "space-between", alignItems: "center", height: 64 }}>
         <BrandLockup size={18} />
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <button
@@ -69,7 +69,7 @@ export default function LandingPage() {
         </div>
       </div>
 
-      <div style={{ padding: "0 40px 80px", maxWidth: 1200, margin: "0 auto" }}>
+      <div className="landing-page">
         {/* Live badge */}
         <div style={{ padding: "16px 0 40px" }}>
           <Tag
@@ -123,8 +123,8 @@ export default function LandingPage() {
           </div>
 
           <Card pad={0} style={{ overflow: "hidden" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) clamp(280px,30vw,360px)" }}>
-              <div style={{ padding: 32, borderRight: "1px solid var(--border)" }}>
+            <div className="landing-demo-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) clamp(280px,30vw,360px)" }}>
+              <div className="landing-demo-main" style={{ padding: 32, borderRight: "1px solid var(--border)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
                   <Tag size="sm">Premier League</Tag>
                   <span className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>Dim 19 avr · 17:30</span>
@@ -154,7 +154,7 @@ export default function LandingPage() {
                   <span className="mono tabular" style={{ fontSize: 13, fontWeight: 600, color: "var(--acc-away)" }}>● 28% Arsenal</span>
                 </div>
               </div>
-              <div style={{ padding: 32, background: "var(--bg-inset)", display: "flex", flexDirection: "column", gap: 16 }}>
+              <div className="landing-demo-side" style={{ padding: 32, background: "var(--bg-inset)", display: "flex", flexDirection: "column", gap: 16 }}>
                 <Tag icon={<I.Bolt size={12} />} size="sm" color="var(--value)" tint="var(--value-tint)">Value bet détecté</Tag>
                 <div>
                   <div className="overline" style={{ marginBottom: 6 }}>Recommandation</div>

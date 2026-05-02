@@ -27,6 +27,12 @@ const AuthContext = createContext<AuthContextType>({
   refreshProfile: async () => {},
 });
 
+const isSupabaseLockAbort = (err: unknown) => {
+  if (!err || typeof err !== 'object') return false;
+  const candidate = err as { name?: string; message?: string };
+  return candidate.name === 'AbortError' && (candidate.message ?? '').includes('Lock broken');
+};
+
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -47,6 +53,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setProfile(data);
       }
     } catch (err) {
+      if (isSupabaseLockAbort(err)) return;
       console.error("AuthContext: Error fetching profile:", err);
     }
   }, []);
@@ -58,11 +65,21 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   useEffect(() => {
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (isSupabaseLockAbort(event.reason)) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
     if (!isSupabaseConfigured) {
       setUser(null);
       setProfile(null);
       setLoading(false);
-      return;
+      return () => {
+        window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+      };
     }
 
     const supabase = createClient();
@@ -79,6 +96,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           await fetchProfile(currentUser.id);
         }
       } catch (err) {
+        if (isSupabaseLockAbort(err)) return;
         console.error("AuthContext: Init error:", err);
       } finally {
         setLoading(false);
@@ -102,6 +120,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     });
 
     return () => {
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
       subscription.unsubscribe();
     };
   }, [fetchProfile]);

@@ -1,204 +1,339 @@
 """
-src/features/squad_strength.py
-Évaluation de la force de l'effectif disponible via API-Football.
+Live squad availability features.
 
-Sources :
-  - /injuries?fixture={id}   → joueurs blessés/suspendus (déjà utilisé partiellement)
-  - /players/squads?team={id} → effectif complet
-  - /fixtures/lineups?fixture={id} → 11 titulaires (dispo ~1h avant KO)
-
-La force d'un effectif est calculée via un score de qualité par joueur.
-En l'absence de ratings officiels, on utilise :
-  1. Les ratings historiques moyens de API-Football (/players/statistics)
-  2. Fallback : proxy position (gardien=5, défenseur=4, milieu=6, attaquant=7)
-
-Retourne (home_squad_score, away_squad_score) ∈ [0, 1] normalisés,
-et (home_key_out, away_key_out) booléens si un joueur-clé est absent.
+The prediction pipeline uses this module to convert fixture injuries and
+official lineups into a small probability adjustment. Official lineups are only
+available close to kickoff, so the module also supports fixture/team injury
+fallbacks.
 """
+
+from __future__ import annotations
 
 import logging
 import os
 import time
+from datetime import datetime
+from difflib import SequenceMatcher
 from functools import lru_cache
-from typing import Optional
+from typing import Any
 
 import requests
+from dotenv import load_dotenv
+
+from src.features.team_resolver import normalize_team_name
 
 logger = logging.getLogger(__name__)
+load_dotenv()
 
 API_KEY = os.getenv("API_FOOTBALL_KEY", "")
 BASE_URL = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
-# Positions et leur poids relatif dans l'effectif (proxy de qualité)
 POSITION_WEIGHTS = {
     "Goalkeeper": 5.0,
-    "Defender":   4.0,
+    "Defender": 4.0,
     "Midfielder": 5.5,
-    "Attacker":   7.0,
+    "Attacker": 7.0,
 }
-# Joueurs considérés "clés" si leur absence impacte fortement (top attaquants/milieux)
 KEY_POSITION_THRESHOLD = 6.0
 
+LEAGUE_API_IDS = {
+    "Ligue 1": 61,
+    "F1": 61,
+    "Premier League": 39,
+    "E0": 39,
+    "Bundesliga": 78,
+    "D1": 78,
+    "La Liga": 140,
+    "SP1": 140,
+    "Serie A": 135,
+    "I1": 135,
+    "Championship": 40,
+    "E1": 40,
+    "Eredivisie": 88,
+    "N1": 88,
+    "Primeira Liga": 94,
+    "P1": 94,
+    "Süper Lig": 203,
+    "SÃ¼per Lig": 203,
+    "SÃƒÂ¼per Lig": 203,
+    "T1": 203,
+    "Ligue 2": 62,
+    "F2": 62,
+    "2. Bundesliga": 79,
+    "D2": 79,
+    "La Liga 2": 141,
+    "SP2": 141,
+    "Serie B": 136,
+    "I2": 136,
+    "Belgian Pro League": 144,
+    "B1": 144,
+    "Scottish Premiership": 179,
+    "SC0": 179,
+}
 
-def _api_get(endpoint: str, params: dict) -> Optional[dict]:
+
+def _coerce_api_season(season: int | None = None) -> int:
+    now = datetime.now()
+    if season is None:
+        return now.year if now.month >= 7 else now.year - 1
+    if season == now.year and now.month < 7:
+        return season - 1
+    return season
+
+
+def _norm_player(name: str) -> str:
+    return normalize_team_name(name or "").replace("'", " ")
+
+
+def _same_player(left: str, right: str) -> bool:
+    left_norm = _norm_player(left)
+    right_norm = _norm_player(right)
+    if not left_norm or not right_norm:
+        return False
+    if left_norm == right_norm:
+        return True
+    return SequenceMatcher(None, left_norm, right_norm).ratio() >= 0.88
+
+
+@lru_cache(maxsize=1024)
+def _api_get_cached(endpoint: str, params_items: tuple[tuple[str, str], ...]) -> dict[str, Any] | None:
     if not API_KEY:
         return None
+    params = dict(params_items)
     try:
-        r = requests.get(f"{BASE_URL}/{endpoint}", headers=HEADERS, params=params, timeout=10)
-        if r.status_code == 429:
-            logger.warning("API-Football rate limit — pause 60s")
+        response = requests.get(f"{BASE_URL}/{endpoint}", headers=HEADERS, params=params, timeout=10)
+        if response.status_code == 429:
+            logger.warning("API-Football rate limit - pause 60s")
             time.sleep(60)
-            r = requests.get(f"{BASE_URL}/{endpoint}", headers=HEADERS, params=params, timeout=10)
-        if r.status_code == 200:
-            return r.json()
-    except Exception as e:
-        logger.debug(f"API-Football {endpoint}: {e}")
+            response = requests.get(f"{BASE_URL}/{endpoint}", headers=HEADERS, params=params, timeout=10)
+        if response.status_code == 200:
+            return response.json()
+        logger.debug("API-Football %s status=%s", endpoint, response.status_code)
+    except Exception as exc:
+        logger.debug("API-Football %s failed: %s", endpoint, exc)
     return None
 
 
-@lru_cache(maxsize=128)
-def get_team_id_from_api(team_name: str, league_id: int, season: int) -> Optional[int]:
-    """Résout le team_id API-Football depuis le nom."""
-    data = _api_get("teams", {"name": team_name, "league": league_id, "season": season})
+def _api_get(endpoint: str, params: dict[str, Any]) -> dict[str, Any] | None:
+    params_items = tuple(sorted((key, str(value)) for key, value in params.items() if value is not None))
+    return _api_get_cached(endpoint, params_items)
+
+
+@lru_cache(maxsize=256)
+def get_team_id_from_api(team_name: str, league_id: int, season: int) -> int | None:
+    data = _api_get("teams", {"name": team_name, "league": league_id, "season": _coerce_api_season(season)})
     if data and data.get("response"):
         return data["response"][0]["team"]["id"]
     return None
 
 
-def get_squad_availability(
-    team_api_id: int,
-    fixture_id: Optional[int] = None,
-    season: int = 2024,
-) -> dict:
-    """
-    Retourne les informations de disponibilité de l'effectif pour un match.
-
-    Si fixture_id fourni → tente de récupérer la compo officielle (1h avant KO).
-    Sinon → utilise les blessures de l'équipe.
-
-    Retourne:
-        {
-            "squad_score": float [0-1],    # qualité disponible / qualité totale
-            "available_count": int,
-            "total_count": int,
-            "key_player_out": bool,
-            "missing_players": list[str],
-        }
-    """
-    # 1. Essayer la compo officielle si le match est proche
-    if fixture_id:
-        lineup_data = _api_get("fixtures/lineups", {"fixture": fixture_id})
-        if lineup_data and lineup_data.get("response"):
-            return _parse_lineup(lineup_data["response"], team_api_id)
-
-    # 2. Effectif complet + blessures
-    squad_data = _api_get("players/squads", {"team": team_api_id})
-    injury_data = _api_get("injuries", {"team": team_api_id, "season": season})
-
-    if not squad_data or not squad_data.get("response"):
-        return _default_squad()
-
-    # Construire l'effectif avec poids de position
-    players = squad_data["response"][0].get("players", []) if squad_data["response"] else []
-    squad = {}
-    for p in players:
-        name = p.get("name", "")
-        pos = p.get("position", "Midfielder")
-        weight = POSITION_WEIGHTS.get(pos, 5.0)
-        squad[name] = weight
-
-    # Joueurs indisponibles
-    missing = set()
-    if injury_data and injury_data.get("response"):
-        for inj in injury_data["response"]:
-            player_name = inj.get("player", {}).get("name", "")
-            reason = inj.get("player", {}).get("reason", "")
-            if player_name and reason.lower() not in ("suspended", "unknown") or player_name:
-                missing.add(player_name)
-
-    available = {name: w for name, w in squad.items() if name not in missing}
-    total_weight = sum(squad.values()) or 1.0
-    avail_weight = sum(available.values())
-    key_player_out = any(w >= KEY_POSITION_THRESHOLD for name, w in squad.items() if name in missing)
-
-    return {
-        "squad_score": round(avail_weight / total_weight, 4),
-        "available_count": len(available),
-        "total_count": len(squad),
-        "key_player_out": key_player_out,
-        "missing_players": list(missing),
-    }
-
-
-def _parse_lineup(lineups: list, team_api_id: int) -> dict:
-    """Parse une réponse de lineup officielle."""
-    for lineup in lineups:
-        if lineup.get("team", {}).get("id") == team_api_id:
-            starters = lineup.get("startXI", [])
-            # Une compo officielle = effectif au complet (11 joueurs confirmés)
-            return {
-                "squad_score": 1.0,  # compo officielle = disponibilité totale des 11
-                "available_count": len(starters),
-                "total_count": 11,
-                "key_player_out": False,
-                "missing_players": [],
-            }
-    return _default_squad()
-
-
-def _default_squad() -> dict:
+def _default_squad(source: str = "default") -> dict[str, Any]:
     return {
         "squad_score": 1.0,
         "available_count": 11,
         "total_count": 11,
         "key_player_out": False,
         "missing_players": [],
+        "lineup_confirmed": False,
+        "formation": None,
+        "starters": [],
+        "source": source,
     }
 
 
-# Codes ligue API-Football pour nos championnats
-LEAGUE_API_IDS = {
-    "Ligue 1": 61,
-    "Premier League": 39,
-    "Bundesliga": 78,
-    "La Liga": 140,
-    "Serie A": 135,
-    "Championship": 40,
-    "Eredivisie": 88,
-    "Primeira Liga": 94,
-    "Süper Lig": 203,
-    "Ligue 2": 62,
-    "2. Bundesliga": 79,
-    "La Liga 2": 141,
-    "Serie B": 136,
-    "Belgian Pro League": 144,
-    "Scottish Premiership": 179,
-}
+@lru_cache(maxsize=512)
+def _fixture_lineups(fixture_id: int) -> tuple[dict[str, Any], ...]:
+    data = _api_get("fixtures/lineups", {"fixture": fixture_id})
+    return tuple((data or {}).get("response", []) or [])
+
+
+def _parse_lineup(lineups: list[dict[str, Any]] | tuple[dict[str, Any], ...], team_api_id: int) -> dict[str, Any] | None:
+    for lineup in lineups:
+        if (lineup.get("team", {}) or {}).get("id") != team_api_id:
+            continue
+        starters = []
+        for item in lineup.get("startXI", []) or []:
+            player = item.get("player", {}) or {}
+            if player.get("name"):
+                starters.append(
+                    {
+                        "name": player.get("name"),
+                        "position": player.get("pos"),
+                        "number": player.get("number"),
+                    }
+                )
+        return {
+            "lineup_confirmed": bool(starters),
+            "formation": lineup.get("formation"),
+            "starters": starters,
+        }
+    return None
+
+
+@lru_cache(maxsize=512)
+def _fixture_injury_players(team_api_id: int, fixture_id: int) -> list[dict[str, Any]]:
+    data = _api_get("injuries", {"fixture": fixture_id})
+    players: list[dict[str, Any]] = []
+    for item in (data or {}).get("response", []) or []:
+        if (item.get("team", {}) or {}).get("id") != team_api_id:
+            continue
+        player = item.get("player", {}) or {}
+        if player.get("name"):
+            players.append(
+                {
+                    "name": player.get("name"),
+                    "type": player.get("type") or "injury",
+                    "reason": player.get("reason") or "",
+                    "photo": player.get("photo"),
+                }
+            )
+    return players
+
+
+@lru_cache(maxsize=512)
+def _team_season_injury_players(team_api_id: int, season: int) -> list[dict[str, Any]]:
+    data = _api_get("injuries", {"team": team_api_id, "season": _coerce_api_season(season)})
+    players: list[dict[str, Any]] = []
+    for item in (data or {}).get("response", []) or []:
+        player = item.get("player", {}) or {}
+        name = player.get("name")
+        if not name:
+            continue
+        injury_type = str(player.get("type") or "").lower()
+        reason = str(player.get("reason") or "").lower()
+        if "returned" in injury_type or "available" in reason:
+            continue
+        players.append(
+            {
+                "name": name,
+                "type": player.get("type") or "injury",
+                "reason": player.get("reason") or "",
+                "photo": player.get("photo"),
+            }
+        )
+    return players
+
+
+@lru_cache(maxsize=512)
+def _squad_weights(team_api_id: int) -> dict[str, float]:
+    squad_data = _api_get("players/squads", {"team": team_api_id})
+    if not squad_data or not squad_data.get("response"):
+        return {}
+
+    players = squad_data["response"][0].get("players", []) if squad_data["response"] else []
+    squad: dict[str, float] = {}
+    for player in players:
+        name = player.get("name")
+        if not name:
+            continue
+        position = player.get("position", "Midfielder")
+        squad[name] = POSITION_WEIGHTS.get(position, 5.0)
+    return squad
+
+
+def get_squad_availability(
+    team_api_id: int,
+    fixture_id: int | None = None,
+    season: int = 2024,
+    fixture_injuries: list[dict[str, Any]] | None = None,
+    fetch_lineups: bool = True,
+) -> dict[str, Any]:
+    """
+    Return squad availability for one team.
+
+    fixture_injuries can be passed by the caller to avoid a second /injuries
+    request after API-Football fixture matching.
+    """
+    if not team_api_id:
+        return _default_squad("missing_team_id")
+
+    lineup_info: dict[str, Any] | None = None
+    if fixture_id and fetch_lineups:
+        lineups = _fixture_lineups(int(fixture_id))
+        if lineups:
+            lineup_info = _parse_lineup(lineups, team_api_id)
+
+    if fixture_injuries is not None:
+        missing_players = fixture_injuries
+        source = "fixture"
+    elif fixture_id:
+        missing_players = _fixture_injury_players(team_api_id, fixture_id)
+        source = "fixture"
+    else:
+        missing_players = _team_season_injury_players(team_api_id, season)
+        source = "team_season"
+
+    if not missing_players:
+        fallback = _default_squad(source)
+        if lineup_info:
+            fallback.update(lineup_info)
+            fallback["available_count"] = len(lineup_info.get("starters", [])) or fallback["available_count"]
+            fallback["total_count"] = max(11, fallback["available_count"])
+        return fallback
+
+    squad = _squad_weights(team_api_id)
+    if not squad:
+        fallback = _default_squad(source)
+        fallback["missing_players"] = missing_players
+        fallback["available_count"] = max(0, fallback["total_count"] - len(missing_players))
+        if lineup_info:
+            fallback.update(lineup_info)
+            fallback["available_count"] = len(lineup_info.get("starters", [])) or fallback["available_count"]
+            fallback["total_count"] = max(11, fallback["available_count"])
+        return fallback
+
+    missing_names = [str(player.get("name") or "") for player in missing_players if player.get("name")]
+    matched_missing: set[str] = set()
+    missing_weight = 0.0
+
+    for missing_name in missing_names:
+        matched_name = next((name for name in squad if _same_player(name, missing_name)), None)
+        if matched_name:
+            matched_missing.add(matched_name)
+            missing_weight += squad[matched_name]
+        else:
+            missing_weight += 5.0
+
+    total_weight = sum(squad.values()) or 1.0
+    avail_weight = max(0.0, total_weight - missing_weight)
+    key_player_out = any(squad.get(name, 0.0) >= KEY_POSITION_THRESHOLD for name in matched_missing)
+
+    result = {
+        "squad_score": round(avail_weight / total_weight, 4),
+        "available_count": max(0, len(squad) - len(matched_missing)),
+        "total_count": len(squad),
+        "key_player_out": key_player_out,
+        "missing_players": missing_players,
+        "lineup_confirmed": False,
+        "formation": None,
+        "starters": [],
+        "source": source,
+    }
+    if lineup_info:
+        result.update(lineup_info)
+    return result
 
 
 def compute_squad_adjustment(
-    home_squad: dict,
-    away_squad: dict,
+    home_squad: dict[str, Any],
+    away_squad: dict[str, Any],
     max_shift: float = 0.05,
 ) -> dict[str, float]:
     """
-    Convertit les scores d'effectif en ajustements de probabilités.
-
-    Un écart de disponibilité de 10% peut déplacer les probs de max_shift points.
-    Retourne des deltas {"home": Δ, "draw": Δ, "away": Δ}.
+    Convert squad availability into probability deltas.
     """
-    diff = home_squad["squad_score"] - away_squad["squad_score"]  # [-1, +1]
+    home_score = float(home_squad.get("squad_score", 1.0))
+    away_score = float(away_squad.get("squad_score", 1.0))
+    diff = home_score - away_score
 
-    # Bonus supplémentaire si joueur-clé manque chez l'adversaire
-    if away_squad["key_player_out"] and not home_squad["key_player_out"]:
+    if away_squad.get("key_player_out") and not home_squad.get("key_player_out"):
         diff += 0.15
-    elif home_squad["key_player_out"] and not away_squad["key_player_out"]:
+    elif home_squad.get("key_player_out") and not away_squad.get("key_player_out"):
         diff -= 0.15
 
     diff = max(-1.0, min(1.0, diff))
     shift = diff * max_shift
-
     return {
         "home": round(shift, 4),
         "draw": round(-abs(shift) * 0.2, 4),
@@ -211,32 +346,57 @@ def get_match_squad_info(
     away_name: str,
     league: str,
     season: int = 2024,
-    fixture_id: Optional[int] = None,
-) -> tuple[dict, dict]:
-    """
-    Point d'entrée principal : retourne (home_squad_info, away_squad_info).
-    Retourne des valeurs par défaut si API-Football indisponible.
-    """
+    fixture_id: int | None = None,
+    home_api_id: int | None = None,
+    away_api_id: int | None = None,
+    fixture_injuries: dict[str, Any] | None = None,
+    fetch_lineups: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     if not API_KEY:
-        return _default_squad(), _default_squad()
+        return _default_squad("no_api_key"), _default_squad("no_api_key")
 
     league_id = LEAGUE_API_IDS.get(league)
     if not league_id:
-        return _default_squad(), _default_squad()
+        return _default_squad("unsupported_league"), _default_squad("unsupported_league")
 
-    home_id = get_team_id_from_api(home_name, league_id, season)
-    away_id = get_team_id_from_api(away_name, league_id, season)
+    api_season = _coerce_api_season(season)
+    home_id = home_api_id or get_team_id_from_api(home_name, league_id, api_season)
+    away_id = away_api_id or get_team_id_from_api(away_name, league_id, api_season)
 
-    home_squad = get_squad_availability(home_id, fixture_id, season) if home_id else _default_squad()
-    away_squad = get_squad_availability(away_id, fixture_id, season) if away_id else _default_squad()
+    home_fixture_injuries = None
+    away_fixture_injuries = None
+    if fixture_injuries:
+        home_fixture_injuries = (fixture_injuries.get("home") or {}).get("players")
+        away_fixture_injuries = (fixture_injuries.get("away") or {}).get("players")
+
+    home_squad = (
+        get_squad_availability(home_id, fixture_id, api_season, home_fixture_injuries, fetch_lineups)
+        if home_id
+        else _default_squad("missing_home_id")
+    )
+    away_squad = (
+        get_squad_availability(away_id, fixture_id, api_season, away_fixture_injuries, fetch_lineups)
+        if away_id
+        else _default_squad("missing_away_id")
+    )
 
     logger.debug(
-        f"Effectif {home_name}: {home_squad['available_count']}/{home_squad['total_count']} "
-        f"(score={home_squad['squad_score']:.2f}, key_out={home_squad['key_player_out']})"
+        "Squad %s: %s/%s score=%.2f key_out=%s source=%s",
+        home_name,
+        home_squad.get("available_count"),
+        home_squad.get("total_count"),
+        home_squad.get("squad_score", 1.0),
+        home_squad.get("key_player_out"),
+        home_squad.get("source"),
     )
     logger.debug(
-        f"Effectif {away_name}: {away_squad['available_count']}/{away_squad['total_count']} "
-        f"(score={away_squad['squad_score']:.2f}, key_out={away_squad['key_player_out']})"
+        "Squad %s: %s/%s score=%.2f key_out=%s source=%s",
+        away_name,
+        away_squad.get("available_count"),
+        away_squad.get("total_count"),
+        away_squad.get("squad_score", 1.0),
+        away_squad.get("key_player_out"),
+        away_squad.get("source"),
     )
 
     return home_squad, away_squad

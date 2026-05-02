@@ -1,11 +1,9 @@
 "use client";
 
 import React, { useState, useCallback } from 'react';
-import Logo from '@/components/Logo';
-import ThemeToggle from '@/components/ThemeToggle';
-import UserNav from '@/components/UserNav';
-import Link from 'next/link';
-import { Icons } from '@/components/Icons';
+import { AppShell, PageHeader } from '@/components/AppShell';
+import { Button } from '@/components/ui/Button';
+import { I } from '@/components/Icons';
 
 interface ResultStats {
   total: number;
@@ -61,7 +59,7 @@ export default function ResultsClient({
   const [verifying, setVerifying] = useState(false);
   const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
-    const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").trim();
+  const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").trim();
 
   const fetchResults = useCallback(() => {
     fetch(`${apiUrl}/predictions/results`)
@@ -97,7 +95,7 @@ export default function ResultsClient({
   const WinRateCircle = ({ rate }: { rate: number }) => {
     const circumference = 2 * Math.PI * 54;
     const dashOffset = circumference - (rate / 100) * circumference;
-    const color = rate >= 65 ? '#22c55e' : rate >= 50 ? '#f59e0b' : '#ef4444';
+    const color = rate >= 65 ? 'var(--good)' : rate >= 50 ? 'var(--warn)' : 'var(--bad)';
     return (
       <div style={{ position: 'relative', width: '130px', height: '130px' }}>
         <svg width="130" height="130" style={{ transform: 'rotate(-90deg)' }}>
@@ -107,7 +105,7 @@ export default function ResultsClient({
             strokeLinecap="round" style={{ transition: 'stroke-dashoffset 1s ease' }} />
         </svg>
         <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
-          <div style={{ fontSize: '1.8rem', fontWeight: 700, color: 'var(--text-primary)' }}>{rate}%</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 700, color: 'var(--text)' }}>{rate}%</div>
           <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 600 }}>WIN RATE</div>
         </div>
       </div>
@@ -115,35 +113,17 @@ export default function ResultsClient({
   };
 
   return (
-    <>
-      <header className="header" style={{ background: "var(--header-bg)" }}>
-        <div className="header-logo"><Logo width={220} height={55} /></div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-          <Link href="/dashboard" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 600 }}>Analyses</Link>
-          <Link href="/results" style={{ color: 'var(--color-accent)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 600 }}>Resultats</Link>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <ThemeToggle />
-            <UserNav />
-          </div>
-        </div>
-      </header>
-
-      <main className="container" style={{ maxWidth: '850px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
-            <div>
-              <h1 className="dashboard-title">Resultats & Performance</h1>
-              <p className="dashboard-subtitle">Suivi en temps reel de nos predictions IA vs resultats reels.</p>
-            </div>
-            <button onClick={handleVerify} disabled={verifying}
-              style={{
-                padding: '10px 20px', borderRadius: '10px', border: 'none', cursor: 'pointer',
-                background: verifying ? 'var(--card-inner-bg)' : 'linear-gradient(135deg, #7c3aed, #3b82f6)',
-                color: '#fff', fontWeight: 600, fontSize: '0.85rem', fontFamily: 'inherit',
-                display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s',
-              }}>
-              <Icons.checkCircle size={16} /> {verifying ? 'Verification...' : 'Verifier les resultats'}
-            </button>
-          </div>
+    <AppShell>
+      <div className="app-page results-container">
+          <PageHeader
+            title="Resultats & Performance"
+            subtitle="Suivi en temps reel de nos predictions IA vs resultats reels."
+            actions={
+              <Button onClick={handleVerify} disabled={verifying} variant="value" icon={<I.Check size={15} />}>
+                {verifying ? 'Verification...' : 'Verifier'}
+              </Button>
+            }
+          />
 
           {verifyMsg && (
             <div style={{
@@ -154,14 +134,14 @@ export default function ResultsClient({
           )}
 
           {/* Stats Overview */}
-          <div style={{
+          <div className="results-overview" style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '40px',
-            background: 'var(--glass-bg)', border: '1px solid var(--glass-border)',
+            background: 'var(--bg-elev)', border: '1px solid var(--border)',
             borderRadius: '20px', padding: '30px', marginBottom: '2rem',
             backdropFilter: 'blur(10px)', flexWrap: 'wrap',
           }}>
             <WinRateCircle rate={stats.winRate} />
-            <div style={{ display: 'flex', gap: '24px' }}>
+            <div className="results-stat-counts" style={{ display: 'flex', gap: '24px' }}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: '2rem', fontWeight: 700, color: '#22c55e' }}>{stats.won}</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Gagnes</div>
@@ -180,8 +160,8 @@ export default function ResultsClient({
           {/* Bet Builder Results */}
           {betBuilders.length > 0 && (
             <>
-              <h2 style={{ fontSize: '1rem', color: 'var(--color-accent)', fontWeight: 700, marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Icons.cpu size={16} /> Bet Builder ({betBuilders.length})
+              <h2 style={{ fontSize: '1rem', color: 'var(--value)', fontWeight: 700, marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <I.Spark size={16} /> Bet Builder ({betBuilders.length})
               </h2>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '2rem' }}>
                 {betBuilders.map((bb, i) => {
@@ -192,9 +172,9 @@ export default function ResultsClient({
                       background: statusBg, border: `1px solid ${statusColor}33`,
                       borderRadius: '14px', padding: '16px', borderLeft: `4px solid ${statusColor}`,
                     }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <div className="results-builder-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                         <div>
-                          <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text)' }}>
                             {bb.homeTeam} - {bb.awayTeam}
                           </div>
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
@@ -203,7 +183,7 @@ export default function ResultsClient({
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           {bb.actualScore ? (
-                            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-primary)' }}>{bb.actualScore}</div>
+                            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text)' }}>{bb.actualScore}</div>
                           ) : (
                             <div style={{ fontSize: '0.75rem', color: '#f59e0b', fontWeight: 600 }}>En attente</div>
                           )}
@@ -216,7 +196,7 @@ export default function ResultsClient({
                         {bb.selections.map((sel, j) => {
                           const selColor = sel.isWon === true ? '#22c55e' : sel.isWon === false ? '#ef4444' : 'var(--text-muted)';
                           return (
-                            <div key={j} style={{
+                            <div key={j} className="results-selection-row" style={{
                               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                               padding: '6px 10px', borderRadius: '8px',
                               background: 'rgba(255,255,255,0.03)',
@@ -225,7 +205,7 @@ export default function ResultsClient({
                                 <span style={{ fontSize: '0.8rem' }}>
                                   {sel.isWon === true ? '✅' : sel.isWon === false ? '❌' : '⏳'}
                                 </span>
-                                <span style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 500 }}>{sel.prediction}</span>
+                                <span style={{ fontSize: '0.8rem', color: 'var(--text)', fontWeight: 500 }}>{sel.prediction}</span>
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{sel.confidence}%</span>
@@ -247,19 +227,20 @@ export default function ResultsClient({
           )}
 
           {/* Filter bar */}
-          <div style={{ display: 'flex', gap: '4px', marginBottom: '1rem', background: 'var(--glass-bg)', borderRadius: '10px', padding: '4px', border: '1px solid var(--glass-border)', width: 'fit-content' }}>
+          <div className="results-filter" style={{ display: 'flex', gap: '4px', marginBottom: '1rem', background: 'var(--bg-elev)', borderRadius: '10px', padding: '4px', border: '1px solid var(--border)', width: 'fit-content' }}>
             {([['all', 'Tout'], ['won', 'Gagnes'], ['lost', 'Perdus'], ['pending', 'En attente']] as const).map(([key, label]) => (
               <button key={key} onClick={() => setFilter(key)}
                 style={{
                   padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer',
                   fontWeight: 600, fontSize: '0.8rem', fontFamily: 'inherit', transition: 'all 0.2s',
-                  background: filter === key ? 'linear-gradient(135deg, #7c3aed, #3b82f6)' : 'transparent',
-                  color: filter === key ? '#fff' : 'var(--text-muted)',
+                  background: filter === key ? 'var(--bg-inset)' : 'transparent',
+                  color: filter === key ? 'var(--text)' : 'var(--text-muted)',
+                  boxShadow: filter === key ? 'inset 0 0 0 1px var(--border)' : 'none',
                 }}>{label}</button>
             ))}
           </div>
 
-          <h2 style={{ fontSize: '1rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+          <h2 style={{ fontSize: '1rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
             Historique des predictions ({filtered.length})
           </h2>
 
@@ -272,9 +253,9 @@ export default function ResultsClient({
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {filtered.map((entry) => (
-                <div key={entry.id} style={{
+                <div key={entry.id} className="results-history-row" style={{
                   display: 'flex', alignItems: 'center', gap: '12px',
-                  background: 'var(--glass-bg)', border: '1px solid var(--glass-border)',
+                  background: 'var(--bg-elev)', border: '1px solid var(--border)',
                   borderRadius: '12px', padding: '14px 16px',
                   borderLeft: `3px solid ${entry.isWon === true ? '#22c55e' : entry.isWon === false ? '#ef4444' : '#f59e0b'}`,
                 }}>
@@ -284,11 +265,11 @@ export default function ResultsClient({
                     background: entry.isWon === true ? 'rgba(34,197,94,0.15)' : entry.isWon === false ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)',
                     color: entry.isWon === true ? '#22c55e' : entry.isWon === false ? '#ef4444' : '#f59e0b',
                   }}>
-                    {entry.isWon === true ? <Icons.check size={18} /> : entry.isWon === false ? <Icons.x size={18} /> : <Icons.crosshair size={16} />}
+                    {entry.isWon === true ? <I.Check size={18} /> : entry.isWon === false ? <I.Close size={18} /> : <I.Target size={16} />}
                   </div>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text)' }}>
                       {entry.homeTeam} - {entry.awayTeam}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
@@ -297,9 +278,9 @@ export default function ResultsClient({
                     </div>
                   </div>
 
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <div className="results-history-status" style={{ textAlign: 'right', flexShrink: 0 }}>
                     {entry.actualScore ? (
-                      <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-primary)' }}>{entry.actualScore}</div>
+                      <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text)' }}>{entry.actualScore}</div>
                     ) : (
                       <div style={{ fontSize: '0.75rem', color: '#f59e0b', fontWeight: 600 }}>En attente</div>
                     )}
@@ -312,7 +293,7 @@ export default function ResultsClient({
               ))}
             </div>
           )}
-        </main>
-    </>
+      </div>
+    </AppShell>
   );
 }

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell, PageHeader } from "@/components/AppShell";
 import { MatchModal } from "@/components/MatchModal";
 import { Card } from "@/components/ui/Card";
@@ -8,6 +8,8 @@ import { Ring } from "@/components/ui/Ring";
 import { FormDots } from "@/components/ui/FormDots";
 import { TeamLogo } from "@/components/TeamLogo";
 import { I } from "@/components/Icons";
+import { LiveStatusPill } from "@/components/LiveStatusPill";
+import { useLiveMatches, type MatchLiveStatus } from "@/hooks/useLiveMatches";
 
 type Match = {
   id: number; competition: string; league: string; date: string;
@@ -19,6 +21,7 @@ type Match = {
   stats?: { btts_pct?: number; over25_pct?: number; over15_pct?: number; home_form?: string[]; away_form?: string[]; predicted_goals?: number; predicted_corners?: number; predicted_cards?: number };
   betBuilder?: BetBuilder;
   details?: { homeElo?: number; awayElo?: number; homeDaysRest?: number; awayDaysRest?: number; weatherCode?: number };
+  liveStatus?: MatchLiveStatus;
 };
 
 type BetBuilderSelection = {
@@ -74,6 +77,11 @@ function fairOdds(confidence: number, haircut = 0.94) {
   return +Math.max(1.01, (100 / clampPct(confidence)) * haircut).toFixed(2);
 }
 
+function marketOdd(m: Match, key: "h" | "d" | "a") {
+  const legacy = key === "h" ? "home" : key === "d" ? "draw" : "away";
+  return m.odds?.[key] ?? m.odds?.[legacy];
+}
+
 function makeRealCombo(id: string, profile: Combo["profile"], legs: Leg[], backendConfidence?: number, backendOdds?: number): Combo | null {
   if (legs.length === 0) return null;
   const totalOdds = backendOdds && legs.length > 2
@@ -104,7 +112,7 @@ function heuristicLegs(m: Match): Leg[] {
   const fav = pr.p1 >= pr.p2 ? "home" : "away";
   const favTeam = fav === "home" ? m.homeTeam : m.awayTeam;
   const favProb = Math.max(pr.p1, pr.p2);
-  const favOdds = fav === "home" ? (m.odds?.h ?? m.odds?.home) : (m.odds?.a ?? m.odds?.away);
+  const favOdds = fav === "home" ? marketOdd(m, "h") : marketOdd(m, "a");
   const dcConfidence = clampPct(favProb + pr.pn);
   const over15 = clampPct(st.over15_pct ?? 0);
   const over25 = clampPct(st.over25_pct ?? 0);
@@ -182,7 +190,7 @@ function StatTile({ label, value }: { label: string; value: string }) {
 function AIComboCard({ combo }: { combo: Combo }) {
   const p = comboPalette[combo.profile];
   return (
-    <Card pad={0} hover={false} style={{ overflow: "hidden" }}>
+    <Card className="ai-combo-card" pad={0} hover={false} style={{ overflow: "hidden" }}>
       <div style={{ padding: "12px 16px", background: p.tint, borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, color: p.color, fontSize: 12, fontWeight: 600 }}>
           {p.icon} Combiné {p.label}
@@ -199,7 +207,7 @@ function AIComboCard({ combo }: { combo: Combo }) {
               fontSize: 10, fontWeight: 600, color: "var(--text-soft)", flexShrink: 0, marginTop: 1,
             }}>{i + 1}</div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35 }}>{leg.label}</div>
+              <div className="ai-combo-leg-label" style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35 }}>{leg.label}</div>
               <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
                 {leg.cat}
                 {leg.confidence ? ` · ${Math.round(leg.confidence)}%` : ""}
@@ -228,21 +236,38 @@ function AIComboCard({ combo }: { combo: Combo }) {
 }
 
 export default function StatsClient({ initialMatches = [] }: { initialMatches: Match[] }) {
-  const [selectedMatch, setSelectedMatch] = useState<Match | null>(initialMatches.length > 0 ? initialMatches[0] : null);
+  const { matches: liveMatches, state: liveState } = useLiveMatches<Match>(initialMatches, 40);
+  const [selectedMatchId, setSelectedMatchId] = useState<number | null>(initialMatches[0]?.id ?? null);
   const [openedMatch, setOpenedMatch] = useState<Match | null>(null);
+
+  useEffect(() => {
+    if (liveMatches.length === 0) {
+      setSelectedMatchId(null);
+      return;
+    }
+    if (!liveMatches.some((match) => match.id === selectedMatchId)) {
+      setSelectedMatchId(liveMatches[0].id);
+    }
+  }, [liveMatches, selectedMatchId]);
+
+  const selectedMatch = useMemo(
+    () => liveMatches.find((match) => match.id === selectedMatchId) ?? liveMatches[0] ?? null,
+    [liveMatches, selectedMatchId],
+  );
 
   const combos = useMemo(() => (selectedMatch ? buildCombos(selectedMatch) : []), [selectedMatch]);
   const st = selectedMatch?.stats ?? {};
 
   return (
     <AppShell>
-      <div style={{ padding: "0 40px 80px" }}>
+      <div className="app-page">
         <PageHeader
           title="Stats & AI Bet Builder"
+          actions={<LiveStatusPill state={liveState} />}
           subtitle="Stats prédictives par match et combinés générés par l'IA selon votre appétit au risque."
         />
 
-        {initialMatches.length === 0 ? (
+        {liveMatches.length === 0 ? (
           <div style={{ padding: "80px 0", textAlign: "center" }}>
             <div className="mono" style={{ fontSize: 14, color: "var(--text-muted)" }}>Aucune stat trouvée.</div>
           </div>
@@ -251,12 +276,13 @@ export default function StatsClient({ initialMatches = [] }: { initialMatches: M
             {/* Left: match stats */}
             <div>
               {/* Match selector */}
-              <div style={{ marginBottom: 24, overflowX: "auto" }}>
-                <div style={{ display: "flex", gap: 10, paddingBottom: 8 }}>
-                  {initialMatches.map((m) => (
+              <div className="stats-match-selector" style={{ marginBottom: 24, overflowX: "auto" }}>
+                <div className="stats-match-selector-track" style={{ display: "flex", gap: 10, paddingBottom: 8 }}>
+                  {liveMatches.map((m) => (
                     <button
                       key={m.id}
-                      onClick={() => setSelectedMatch(m)}
+                      onClick={() => setSelectedMatchId(m.id)}
+                      className={m.id === selectedMatch?.id ? "stats-match-pill active" : "stats-match-pill"}
                       style={{
                         padding: "10px 14px", borderRadius: 10, flexShrink: 0,
                         background: m.id === selectedMatch?.id ? "var(--bg-elev)" : "transparent",
@@ -279,18 +305,18 @@ export default function StatsClient({ initialMatches = [] }: { initialMatches: M
               {selectedMatch && (
                 <Card onClick={() => setOpenedMatch(selectedMatch)}>
                   {/* Match header */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, paddingBottom: 24, borderBottom: "1px solid var(--border)", gap: 12 }}>
+                  <div className="stats-match-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, paddingBottom: 24, borderBottom: "1px solid var(--border)", gap: 12 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
                       <TeamLogo name={selectedMatch.homeTeam} size={44} />
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.015em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selectedMatch.homeTeam}</div>
+                        <div className="stats-team-name" style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.015em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selectedMatch.homeTeam}</div>
                         {selectedMatch.details?.homeElo && <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>Elo {selectedMatch.details.homeElo}</div>}
                       </div>
                     </div>
                     <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>VS</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, justifyContent: "flex-end", minWidth: 0 }}>
                       <div style={{ textAlign: "right", minWidth: 0 }}>
-                        <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.015em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selectedMatch.awayTeam}</div>
+                        <div className="stats-team-name" style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.015em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selectedMatch.awayTeam}</div>
                         {selectedMatch.details?.awayElo && <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>Elo {selectedMatch.details.awayElo}</div>}
                       </div>
                       <TeamLogo name={selectedMatch.awayTeam} size={44} />
@@ -298,21 +324,21 @@ export default function StatsClient({ initialMatches = [] }: { initialMatches: M
                   </div>
 
                   {/* Rings */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28, justifyItems: "center" }}>
+                  <div className="stats-rings-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28, justifyItems: "center" }}>
                     <Ring value={st.btts_pct ?? 50} size={84} color="var(--acc-draw)" label="BTTS" />
                     <Ring value={st.over25_pct ?? 50} size={84} color="var(--good)" label="Plus 2.5 buts" />
                     <Ring value={st.over15_pct ?? 65} size={84} color="var(--acc-home)" label="Plus 1.5 but" />
                   </div>
 
                   {/* Predicted totals */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
+                  <div className="stats-tiles-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
                     <StatTile label="Buts prédits" value={(st.predicted_goals ?? 2.5)?.toFixed(1) ?? "2.5"} />
                     <StatTile label="Corners prédits" value={(st.predicted_corners ?? 10)?.toFixed(1) ?? "10.0"} />
                     <StatTile label="Cartons prédits" value={(st.predicted_cards ?? 4)?.toFixed(1) ?? "4.0"} />
                   </div>
 
                   {/* Form */}
-                  <div style={{ padding: 16, background: "var(--bg-inset)", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div className="stats-form-panel" style={{ padding: 16, background: "var(--bg-inset)", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       <span className="overline" style={{ fontSize: 10 }}>Forme domicile</span>
                       <FormDots form={st.home_form ?? []} />
@@ -328,7 +354,7 @@ export default function StatsClient({ initialMatches = [] }: { initialMatches: M
             </div>
 
             {/* Right: AI Bet Builder */}
-            <div style={{ position: "sticky", top: 20, alignSelf: "start", display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="stats-builder-panel" style={{ position: "sticky", top: 20, alignSelf: "start", display: "flex", flexDirection: "column", gap: 16 }}>
               <Card pad={20}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
                   <div style={{ width: 28, height: 28, borderRadius: 8, background: "var(--bg-inset)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--value)" }}>

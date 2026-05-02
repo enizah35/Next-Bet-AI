@@ -32,11 +32,17 @@ out/
 
 # Agentic / Meta
 .gemini/
+.claude/
 .agents/
 .agent/
 _agents/
 _agent/
 *.md_agent
+frontend/.claude/
+frontend/.agents/
+frontend/skills/
+frontend/AGENTS.md
+frontend/CLAUDE.md
 
 # Database
 *.db
@@ -49,7 +55,9 @@ find_seed.py
 debug_api.py
 output.txt
 *.html
+*.tsbuildinfo
 skills-lock.json
+scripts/live_odds_snapshot.json
 
 # Media
 artifacts/
@@ -57,6 +65,9 @@ media/
 *.png
 *.jpg
 *.jpeg
+!frontend/public/offline.html
+!frontend/public/icons/
+!frontend/public/icons/*.png
 
 # IDE / Editor
 .vscode/

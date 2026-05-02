@@ -221,13 +221,11 @@ Prédiction sauvegardée (features_json) ──► Match joué ──► /predic
 
 ---
 
-## 9. Automatisation (Airflow DAG)
+## 9. Automatisation
 
-| Fréquence | Tâche |
-|---|---|
-| **Quotidien 07:00 UTC** | Ingestion nouvelles données + feature engineering |
-| **Lundi 05:00 UTC** | Feedback retrain du méta-learner |
-| **1er du mois 04:00 UTC** | Re-entraînement complet (NN + XGB + LGB + stacking) |
+L'automatisation planifiee a ete retiree pendant la phase de developpement.
+Les pipelines se lancent manuellement pour garder le projet plus simple tant que le front,
+les donnees live et le modele ne sont pas stabilises.
 
 ---
 

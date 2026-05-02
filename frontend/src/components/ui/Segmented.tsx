@@ -12,13 +12,15 @@ interface SegmentedProps {
   value: string;
   onChange: (v: string) => void;
   size?: "sm" | "md";
+  className?: string;
 }
 
-export function Segmented({ options, value, onChange, size = "md" }: SegmentedProps) {
+export function Segmented({ options, value, onChange, size = "md", className }: SegmentedProps) {
   const pad = size === "sm" ? "6px 12px" : "8px 14px";
   const fs = size === "sm" ? 12 : 13;
   return (
     <div
+      className={className}
       style={{
         display: "inline-flex", padding: 3, gap: 2,
         background: "var(--bg-inset)", borderRadius: 10,

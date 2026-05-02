@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e0e10" />
+    <title>Next Bet AI - hors ligne</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      }
+      body {
+        min-height: 100dvh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: #0e0e10;
+        color: #f4f4f2;
+      }
+      main {
+        width: min(100%, 420px);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 22px;
+        padding: 24px;
+        background: #171719;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.32);
+      }
+      img {
+        width: 56px;
+        height: 56px;
+        object-fit: contain;
+        margin-bottom: 18px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 24px;
+        line-height: 1.1;
+      }
+      p {
+        margin: 0;
+        color: #a6a6ad;
+        line-height: 1.5;
+      }
+      button {
+        min-height: 46px;
+        width: 100%;
+        margin-top: 22px;
+        border: 0;
+        border-radius: 14px;
+        background: #f4f4f2;
+        color: #0e0e10;
+        font: inherit;
+        font-weight: 650;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/icons/icon-192.png" alt="" />
+      <h1>Connexion perdue</h1>
+      <p>Les donnees live et les predictions ont besoin du reseau. Reviens en ligne puis recharge l'app.</p>
+      <button type="button" onclick="location.reload()">Recharger</button>
+    </main>
+  </body>
+</html>

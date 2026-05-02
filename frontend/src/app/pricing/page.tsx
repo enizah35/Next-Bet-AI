@@ -118,7 +118,7 @@ export default function PricingPage() {
   return (
     <CycleCtx.Provider value={cycle}>
       <AppShell>
-        <div style={{ padding: "0 40px 80px" }}>
+        <div className="app-page">
           <PageHeader
             overline="Forfaits"
             title="Choisis ton championnat."
@@ -133,7 +133,7 @@ export default function PricingPage() {
           />
 
           {/* Cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, padding: "20px 0", alignItems: "stretch" }}>
+          <div className="match-card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))", gap: 20, padding: "20px 0", alignItems: "stretch" }}>
             {PLANS.map((p) => <PlanCard key={p.id} plan={p} />)}
           </div>
 
@@ -141,7 +141,8 @@ export default function PricingPage() {
           <section style={{ marginTop: 56 }}>
             <div className="overline" style={{ marginBottom: 14 }}>Comparer en détail</div>
             <Card pad={0} hover={false} style={{ overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", minWidth: 620, borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "var(--bg-inset)" }}>
                     {["Fonctionnalité", "Ligue 1", "Premier League", "Ultimate"].map((h, i) => (
@@ -170,13 +171,14 @@ export default function PricingPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </Card>
           </section>
 
           {/* Guarantees */}
           <section style={{ marginTop: 56 }}>
             <div className="overline" style={{ marginBottom: 16 }}>Garanties</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
+            <div className="match-card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 16 }}>
               {([
                 [<I.Lock size={18} sw={1.6} />, "Paiement sécurisé", "Stripe. Aucune donnée bancaire stockée chez nous."],
                 [<I.Close size={18} sw={1.6} />, "Annulation 1-clic", "Depuis ton profil, sans e-mail ni justification."],

@@ -1,4 +1,5 @@
 import ResultsClient from "./ResultsClient";
+import { getServerApiUrl } from "@/utils/api";
 
 export const revalidate = 60; // optionally cache results, or set to 0 for always dynamic
 
@@ -32,7 +33,7 @@ type BetBuilderEntry = {
 };
 
 export default async function ResultsPage() {
-  const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").trim();
+  const apiUrl = getServerApiUrl();
   let initialStats: ResultStats = { total: 0, won: 0, lost: 0, pending: 0, winRate: 0 };
   let initialHistory: PredictionEntry[] = [];
   let initialBetBuilders: BetBuilderEntry[] = [];

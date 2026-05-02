@@ -159,9 +159,10 @@ def generate_bet_builder(
     """
     bk = bookmaker_odds or {}
     h2h_bk = bk.get("h2h", {})
+    double_chance_bk = bk.get("double_chance", {})
     totals_bk = bk.get("totals", {})
     btts_bk = bk.get("btts", {})
-    has_bookmaker = bool(h2h_bk or totals_bk or btts_bk)
+    has_bookmaker = bool(h2h_bk or double_chance_bk or totals_bk or btts_bk)
 
     p1 = match_probs.get("p1", 33.3)
     pn = match_probs.get("pn", 33.4)
@@ -279,6 +280,15 @@ def generate_bet_builder(
         elif key in ("draw",):
             bm_odds, bm_name = _best_bookmaker_odds(h2h_bk, "draw")
             all_odds = _all_bookmaker_odds_for_market(h2h_bk, "draw")
+        elif key in ("dc_home",):
+            bm_odds, bm_name = _best_bookmaker_odds(double_chance_bk, "home_draw")
+            all_odds = _all_bookmaker_odds_for_market(double_chance_bk, "home_draw")
+        elif key in ("dc_away",):
+            bm_odds, bm_name = _best_bookmaker_odds(double_chance_bk, "draw_away")
+            all_odds = _all_bookmaker_odds_for_market(double_chance_bk, "draw_away")
+        elif key in ("dc_12",):
+            bm_odds, bm_name = _best_bookmaker_odds(double_chance_bk, "home_away")
+            all_odds = _all_bookmaker_odds_for_market(double_chance_bk, "home_away")
         elif key in ("over_15", "over_25", "over_35"):
             point = {"over_15": 1.5, "over_25": 2.5, "over_35": 3.5}[key]
             bm_odds, bm_name = _totals_odds(totals_bk, point)
