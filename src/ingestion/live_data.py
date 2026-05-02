@@ -54,6 +54,7 @@ ESPN_LEAGUE_CODES: dict[str, str] = {
     "Süper Lig":      "tur.1",
     "Belgian Pro League": "bel.1",
     "Scottish Premiership": "sco.1",
+    "Champions League": "uefa.champions",
 }
 
 RSS_FEEDS = {
@@ -81,6 +82,7 @@ FAST_FALLBACK_TEAMS: dict[str, list[str]] = {
     "SÃ¼per Lig": ["Galatasaray", "Fenerbahce", "Besiktas", "Trabzonspor", "Basaksehir", "Sivasspor", "Antalyaspor", "Alanyaspor"],
     "Belgian Pro League": ["Club Brugge", "Anderlecht", "Genk", "Gent", "Antwerp", "Standard Liege", "Union SG", "Mechelen"],
     "Scottish Premiership": ["Celtic", "Rangers", "Hearts", "Hibernian", "Aberdeen", "Motherwell", "Dundee", "St Mirren"],
+    "Champions League": ["Real Madrid", "Man City", "Bayern Munich", "Paris SG", "Inter", "Liverpool", "Barcelona", "Arsenal"],
 }
 
 

@@ -32,7 +32,7 @@ UPCOMING_DEFAULT_LEAGUES = [
     item.strip()
     for item in os.getenv(
         "UPCOMING_DEFAULT_LEAGUES",
-        "Premier League,Championship,Ligue 1,Ligue 2,Bundesliga,2. Bundesliga,La Liga,La Liga 2,Serie A,Serie B,Eredivisie,Primeira Liga,SÃ¼per Lig,Belgian Pro League,Scottish Premiership",
+        "Champions League,Premier League,Championship,Ligue 1,Ligue 2,Bundesliga,2. Bundesliga,La Liga,La Liga 2,Serie A,Serie B,Eredivisie,Primeira Liga,SÃ¼per Lig,Belgian Pro League,Scottish Premiership",
     ).split(",")
     if item.strip()
 ]
@@ -397,7 +397,7 @@ def get_upcoming_predictions(
     league: str = "all",
     fast: bool = True,
     refresh: bool = False,
-    limit: int = 40,
+    limit: Optional[int] = None,
 ) -> list[dict]:
     """
     Retourne les prédictions pour les 7 prochains jours.
@@ -414,8 +414,8 @@ def get_upcoming_predictions(
 
     from src.ingestion.live_data import ESPN_LEAGUE_CODES
 
-    safe_limit = max(1, min(limit, 80))
-    cache_key = f"{league}:{fast}:{safe_limit}"
+    safe_limit = max(1, min(limit, 500)) if limit else None
+    cache_key = f"{league}:{fast}:{safe_limit if safe_limit is not None else 'all'}"
     now = time.time()
     cached = _upcoming_cache.get(cache_key)
     if cached and not refresh and now - cached[0] < UPCOMING_CACHE_TTL_SECONDS:
@@ -451,7 +451,53 @@ def get_upcoming_predictions(
     if not live_matches:
         _upcoming_cache[cache_key] = (time.time(), [])
         return []
-    live_matches = live_matches[:safe_limit]
+
+    # Filtre temporel : on retire les matchs ayant débuté il y a plus de 90 minutes
+    from datetime import timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=90)
+
+    def _match_kickoff(m: dict) -> Optional[datetime]:
+        raw = m.get("date")
+        if not raw:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    fresh_matches: list[dict] = []
+    for m in live_matches:
+        ko = _match_kickoff(m)
+        if ko is None or ko >= cutoff:
+            fresh_matches.append(m)
+    live_matches = fresh_matches
+
+    if not live_matches:
+        _upcoming_cache[cache_key] = (time.time(), [])
+        return []
+
+    # Tri / sélection équilibrée par ligue (round-robin) pour que toutes les
+    # compétitions soient représentées même quand un cap est appliqué.
+    by_league: dict[str, list[dict]] = {}
+    for m in live_matches:
+        by_league.setdefault(m.get("competition", "?"), []).append(m)
+    for lst in by_league.values():
+        lst.sort(key=lambda x: _match_kickoff(x) or datetime.max.replace(tzinfo=timezone.utc))
+
+    balanced: list[dict] = []
+    league_order = list(by_league.keys())
+    cap = safe_limit if safe_limit is not None else float("inf")
+    while len(balanced) < cap and any(by_league[lg] for lg in league_order):
+        for lg in league_order:
+            if not by_league[lg]:
+                continue
+            balanced.append(by_league[lg].pop(0))
+            if len(balanced) >= cap:
+                break
+    live_matches = balanced
 
     # 1b. Cotes multi-marchés (par ligue)
     bookmaker_cache: dict = {}

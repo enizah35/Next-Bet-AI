@@ -8,7 +8,7 @@ export default async function DashboardPage() {
   let initialMatches = [];
 
   try {
-    const res = await fetch(`${apiUrl}/predictions/upcoming?fast=true&limit=40`, {
+    const res = await fetch(`${apiUrl}/predictions/upcoming?fast=true`, {
       signal: AbortSignal.timeout(25000),
     });
     if (res.ok) {
