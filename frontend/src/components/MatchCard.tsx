@@ -11,6 +11,8 @@ interface MatchCardProps {
     date: string;
     homeTeam: string;
     awayTeam: string;
+    homeLogo?: string | null;
+    awayLogo?: string | null;
     probs: { p1: number; pn: number; p2: number };
     valueBet?: { active?: boolean; edge?: number };
     recommendation?: string;
@@ -19,7 +21,7 @@ interface MatchCardProps {
 }
 
 export function MatchCard({ match, onClick }: MatchCardProps) {
-  const { competition, date, homeTeam, awayTeam, probs, valueBet, recommendation } = match;
+  const { competition, date, homeTeam, awayTeam, homeLogo, awayLogo, probs, valueBet, recommendation } = match;
   const favorite = probs.p1 >= probs.p2 ? "home" : "away";
   const maxProb = Math.max(probs.p1, probs.pn, probs.p2);
   const dateFmt = new Date(date).toLocaleString("fr-FR", {
@@ -40,7 +42,7 @@ export function MatchCard({ match, onClick }: MatchCardProps) {
           const isFav = side === favorite;
           return (
             <div key={side} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <TeamLogo name={name} size={32} />
+              <TeamLogo name={name} logoUrl={side === "home" ? homeLogo : awayLogo} size={32} />
               <div className="match-card-team-name" style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: isFav ? 600 : 500, color: isFav ? "var(--text)" : "var(--text-soft)", letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {name}
               </div>

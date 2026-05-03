@@ -15,18 +15,18 @@
     "ok": true,
     "matches": 6038,
     "test_accuracy": 0.5108,
-    "market_baseline_test_accuracy": 0.5274,
-    "best_vs_market_delta": -0.0166,
-    "best_approach": "xgboost"
+    "market_baseline_test_accuracy": 0.5257,
+    "best_vs_market_delta": -0.0149,
+    "best_approach": "nn_ensemble"
   },
   {
     "league_code": "D1",
     "league_name": "Bundesliga",
     "ok": true,
     "matches": 4869,
-    "test_accuracy": 0.5144,
+    "test_accuracy": 0.5226,
     "market_baseline_test_accuracy": 0.5329,
-    "best_vs_market_delta": -0.0185,
+    "best_vs_market_delta": -0.0103,
     "best_approach": "nn_ensemble"
   },
   {
@@ -44,9 +44,109 @@
     "league_name": "Serie A",
     "ok": true,
     "matches": 6038,
-    "test_accuracy": 0.5439,
-    "market_baseline_test_accuracy": 0.5423,
-    "best_vs_market_delta": 0.0016,
+    "test_accuracy": 0.5506,
+    "market_baseline_test_accuracy": 0.5406,
+    "best_vs_market_delta": 0.01,
+    "best_approach": "xgboost"
+  },
+  {
+    "league_code": "E1",
+    "league_name": "Championship",
+    "ok": true,
+    "matches": 8819,
+    "test_accuracy": 0.4631,
+    "market_baseline_test_accuracy": 0.4733,
+    "best_vs_market_delta": -0.0102,
+    "best_approach": "xgboost"
+  },
+  {
+    "league_code": "F2",
+    "league_name": "Ligue 2",
+    "ok": true,
+    "matches": 5811,
+    "test_accuracy": 0.4527,
+    "market_baseline_test_accuracy": 0.4733,
+    "best_vs_market_delta": -0.0206,
+    "best_approach": "xgboost"
+  },
+  {
+    "league_code": "D2",
+    "league_name": "2. Bundesliga",
+    "ok": true,
+    "matches": 4869,
+    "test_accuracy": 0.463,
+    "market_baseline_test_accuracy": 0.4733,
+    "best_vs_market_delta": -0.0103,
+    "best_approach": "xgboost"
+  },
+  {
+    "league_code": "SP2",
+    "league_name": "La Liga 2",
+    "ok": true,
+    "matches": 7336,
+    "test_accuracy": 0.487,
+    "market_baseline_test_accuracy": 0.5007,
+    "best_vs_market_delta": -0.0137,
+    "best_approach": "xgboost"
+  },
+  {
+    "league_code": "I2",
+    "league_name": "Serie B",
+    "ok": true,
+    "matches": 6678,
+    "test_accuracy": 0.4603,
+    "market_baseline_test_accuracy": 0.4603,
+    "best_vs_market_delta": 0.0,
+    "best_approach": "xgboost"
+  },
+  {
+    "league_code": "N1",
+    "league_name": "Eredivisie",
+    "ok": true,
+    "matches": 4795,
+    "test_accuracy": 0.5344,
+    "market_baseline_test_accuracy": 0.524,
+    "best_vs_market_delta": 0.0104,
     "best_approach": "nn_ensemble"
+  },
+  {
+    "league_code": "P1",
+    "league_name": "Primeira Liga",
+    "ok": true,
+    "matches": 4603,
+    "test_accuracy": 0.537,
+    "market_baseline_test_accuracy": 0.5609,
+    "best_vs_market_delta": -0.0239,
+    "best_approach": "lightgbm"
+  },
+  {
+    "league_code": "T1",
+    "league_name": "S\u00fcper Lig",
+    "ok": true,
+    "matches": 5200,
+    "test_accuracy": 0.5692,
+    "market_baseline_test_accuracy": 0.575,
+    "best_vs_market_delta": -0.0058,
+    "best_approach": "nn_ensemble"
+  },
+  {
+    "league_code": "B1",
+    "league_name": "Belgian Pro League",
+    "ok": true,
+    "matches": 4212,
+    "test_accuracy": 0.4941,
+    "market_baseline_test_accuracy": 0.4941,
+    "best_vs_market_delta": 0.0,
+    "best_approach": "xgboost"
+  },
+  {
+    "league_code": "SC0",
+    "league_name": "Scottish Premiership",
+    "ok": true,
+    "matches": 3575,
+    "test_accuracy": 0.5378,
+    "market_baseline_test_accuracy": 0.5294,
+    "best_vs_market_delta": 0.0084,
+    "best_approach": "xgboost"
   }
 ]

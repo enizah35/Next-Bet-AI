@@ -21,6 +21,28 @@ logger = logging.getLogger(__name__)
 
 CACHE_PATH = Path(__file__).parent.parent.parent / "scripts" / "news_sentiment_cache.json"
 
+_BERT_PIPELINE = None
+_BERT_PIPELINE_FAILED = False
+
+
+def _get_bert_pipeline():
+    """Charge le pipeline BERT une seule fois (singleton process-wide)."""
+    global _BERT_PIPELINE, _BERT_PIPELINE_FAILED
+    if _BERT_PIPELINE is not None or _BERT_PIPELINE_FAILED:
+        return _BERT_PIPELINE
+    try:
+        from transformers import pipeline as hf_pipeline
+        model_name = "lxyuan/distilbert-base-multilingual-cased-sentiments-student"
+        _BERT_PIPELINE = hf_pipeline("text-classification", model=model_name, top_k=1)
+        logger.info("Pipeline BERT (sentiment) chargé une fois (singleton).")
+    except ImportError:
+        _BERT_PIPELINE_FAILED = True
+        logger.warning("transformers non installé — sentiment BERT désactivé.")
+    except Exception as e:
+        _BERT_PIPELINE_FAILED = True
+        logger.warning(f"BERT pipeline init échouée: {e}")
+    return _BERT_PIPELINE
+
 # Mots-clés football pour enrichir le signal BERT avec du contexte métier
 NEGATIVE_SIGNALS = [
     # FR
@@ -116,18 +138,13 @@ def get_team_news_sentiment(
 
     bert_mean = 0.0
     if use_bert:
-        try:
-            from transformers import pipeline as hf_pipeline
-            # Modèle multilingue léger (~250MB, supporte FR+EN)
-            model_name = "lxyuan/distilbert-base-multilingual-cased-sentiments-student"
-            pipe = hf_pipeline("text-classification", model=model_name, top_k=1)
-            bert_mean = _bert_score(headlines, pipe)
-            logger.debug(f"BERT sentiment {team_name}: {bert_mean:.3f}")
-        except ImportError:
-            logger.warning("transformers non installé — sentiment BERT désactivé. "
-                           "Installez avec: pip install transformers sentencepiece")
-        except Exception as e:
-            logger.warning(f"BERT indisponible pour {team_name}: {e}")
+        pipe = _get_bert_pipeline()
+        if pipe is not None:
+            try:
+                bert_mean = _bert_score(headlines, pipe)
+                logger.debug(f"BERT sentiment {team_name}: {bert_mean:.3f}")
+            except Exception as e:
+                logger.warning(f"BERT indisponible pour {team_name}: {e}")
 
     # Combinaison : BERT pondéré à 70% si disponible, mots-clés à 30%
     if bert_mean != 0.0:

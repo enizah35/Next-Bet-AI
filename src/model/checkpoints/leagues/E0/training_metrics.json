@@ -1,7 +1,7 @@
 {
-  "best_val_loss": 1.0071,
-  "best_val_acc": 0.547,
-  "epochs_trained": 36,
+  "best_val_loss": 0.9945,
+  "best_val_acc": 0.558,
+  "epochs_trained": 35,
   "model_config": {
     "input_dim": 54,
     "hidden_dim": 128,
@@ -11,23 +11,28 @@
   },
   "test_accuracy": 0.5108,
   "per_class_accuracy": {
-    "H": 0.746,
-    "D": 0.166,
-    "A": 0.446
+    "H": 0.718,
+    "D": 0.152,
+    "A": 0.441
   },
   "test_samples": 603,
   "ensemble_size": 1,
   "temperature": 1.0,
-  "best_approach": "xgboost",
+  "best_approach": "nn_ensemble",
   "all_results": {
-    "nn_ensemble": 0.4959,
-    "xgboost": 0.5108,
-    "lightgbm": 0.4959,
-    "stacking": 0.4992
+    "nn_ensemble": 0.5108,
+    "xgboost": 0.5058,
+    "lightgbm": 0.4992,
+    "stacking": 0.4826
   },
-  "market_baseline_test_accuracy": 0.5274,
+  "market_baseline_test_accuracy": 0.5257,
   "market_baseline_full_accuracy": 0.5459,
-  "best_vs_market_delta": -0.0166,
+  "best_vs_market_delta": -0.0149,
+  "draw_specialist": {
+    "selected": 130,
+    "precision": 0.2923,
+    "recall": 0.2517
+  },
   "rows_with_feature_nan": 22,
   "total_feature_nan": 260,
   "use_class_weights": false,
@@ -36,138 +41,138 @@
   "confidence_bands": {
     "nn_ensemble": {
       "0.5": {
-        "selected": 317,
-        "coverage": 0.5257,
-        "accuracy": 0.6025
+        "selected": 330,
+        "coverage": 0.5473,
+        "accuracy": 0.6
       },
       "0.55": {
-        "selected": 236,
-        "coverage": 0.3914,
-        "accuracy": 0.6441
+        "selected": 248,
+        "coverage": 0.4113,
+        "accuracy": 0.5968
       },
       "0.6": {
         "selected": 171,
         "coverage": 0.2836,
-        "accuracy": 0.6784
+        "accuracy": 0.655
       },
       "0.65": {
-        "selected": 115,
-        "coverage": 0.1907,
-        "accuracy": 0.6783
+        "selected": 106,
+        "coverage": 0.1758,
+        "accuracy": 0.7075
       },
       "0.7": {
         "selected": 73,
         "coverage": 0.1211,
-        "accuracy": 0.6986
+        "accuracy": 0.726
       }
     },
     "xgboost": {
       "0.5": {
-        "selected": 351,
-        "coverage": 0.5821,
-        "accuracy": 0.6068
+        "selected": 350,
+        "coverage": 0.5804,
+        "accuracy": 0.5857
       },
       "0.55": {
-        "selected": 272,
-        "coverage": 0.4511,
-        "accuracy": 0.625
+        "selected": 268,
+        "coverage": 0.4444,
+        "accuracy": 0.6231
       },
       "0.6": {
-        "selected": 209,
-        "coverage": 0.3466,
-        "accuracy": 0.6268
+        "selected": 216,
+        "coverage": 0.3582,
+        "accuracy": 0.6157
       },
       "0.65": {
         "selected": 152,
         "coverage": 0.2521,
-        "accuracy": 0.6513
+        "accuracy": 0.6447
       },
       "0.7": {
-        "selected": 92,
-        "coverage": 0.1526,
-        "accuracy": 0.6957
+        "selected": 98,
+        "coverage": 0.1625,
+        "accuracy": 0.7041
       }
     },
     "lightgbm": {
       "0.5": {
-        "selected": 336,
-        "coverage": 0.5572,
-        "accuracy": 0.6071
+        "selected": 355,
+        "coverage": 0.5887,
+        "accuracy": 0.6
       },
       "0.55": {
-        "selected": 259,
-        "coverage": 0.4295,
-        "accuracy": 0.6332
+        "selected": 278,
+        "coverage": 0.461,
+        "accuracy": 0.6223
       },
       "0.6": {
-        "selected": 206,
-        "coverage": 0.3416,
-        "accuracy": 0.6117
+        "selected": 222,
+        "coverage": 0.3682,
+        "accuracy": 0.6306
       },
       "0.65": {
-        "selected": 142,
-        "coverage": 0.2355,
-        "accuracy": 0.6549
+        "selected": 161,
+        "coverage": 0.267,
+        "accuracy": 0.6646
       },
       "0.7": {
-        "selected": 81,
-        "coverage": 0.1343,
-        "accuracy": 0.7037
+        "selected": 107,
+        "coverage": 0.1774,
+        "accuracy": 0.6729
       }
     },
     "stacking": {
       "0.5": {
-        "selected": 463,
-        "coverage": 0.7678,
-        "accuracy": 0.5378
+        "selected": 458,
+        "coverage": 0.7595,
+        "accuracy": 0.5087
       },
       "0.55": {
-        "selected": 384,
-        "coverage": 0.6368,
-        "accuracy": 0.5573
+        "selected": 395,
+        "coverage": 0.6551,
+        "accuracy": 0.5241
       },
       "0.6": {
-        "selected": 337,
-        "coverage": 0.5589,
-        "accuracy": 0.5727
+        "selected": 340,
+        "coverage": 0.5638,
+        "accuracy": 0.5441
       },
       "0.65": {
-        "selected": 277,
-        "coverage": 0.4594,
-        "accuracy": 0.5884
+        "selected": 292,
+        "coverage": 0.4842,
+        "accuracy": 0.5719
       },
       "0.7": {
-        "selected": 218,
-        "coverage": 0.3615,
-        "accuracy": 0.5872
+        "selected": 237,
+        "coverage": 0.393,
+        "accuracy": 0.6034
       }
     }
   },
   "best_confidence_bands": {
     "0.5": {
-      "selected": 351,
-      "coverage": 0.5821,
-      "accuracy": 0.6068
+      "selected": 330,
+      "coverage": 0.5473,
+      "accuracy": 0.6
     },
     "0.55": {
-      "selected": 272,
-      "coverage": 0.4511,
-      "accuracy": 0.625
+      "selected": 248,
+      "coverage": 0.4113,
+      "accuracy": 0.5968
     },
     "0.6": {
-      "selected": 209,
-      "coverage": 0.3466,
-      "accuracy": 0.6268
+      "selected": 171,
+      "coverage": 0.2836,
+      "accuracy": 0.655
     },
     "0.65": {
-      "selected": 152,
-      "coverage": 0.2521,
-      "accuracy": 0.6513
+      "selected": 106,
+      "coverage": 0.1758,
+      "accuracy": 0.7075
     },
     "0.7": {
-      "selected": 92,
-      "coverage": 0.1526,
-      "accuracy": 0.6957
+      "selected": 73,
+      "coverage": 0.1211,
+      "accuracy": 0.726
     }
   },
   "num_features": 54

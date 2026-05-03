@@ -49,6 +49,22 @@ LIVE_ODDS_CACHE_TTL_SECONDS = int(os.getenv("LIVE_ODDS_CACHE_TTL_SECONDS", "180"
 _live_odds_cache: dict[str, tuple[float, dict[tuple[str, str], dict]]] = {}
 _bookmaker_odds_cache: dict[str, tuple[float, dict[tuple[str, str], dict]]] = {}
 
+# Negative cache : sport_key inactif (hors saison, 422) ou en quota (429) → skippé
+# pendant ce TTL pour éviter de spammer l'API à chaque match.
+ODDS_NEGATIVE_TTL_SECONDS = int(os.getenv("ODDS_NEGATIVE_TTL_SECONDS", "1800"))
+_odds_negative_cache: dict[tuple[str, str], tuple[float, int]] = {}
+
+
+def _negative_cache_get(sport_key: str, market: str) -> int | None:
+    entry = _odds_negative_cache.get((sport_key, market))
+    if entry and time.time() - entry[0] < ODDS_NEGATIVE_TTL_SECONDS:
+        return entry[1]
+    return None
+
+
+def _negative_cache_set(sport_key: str, market: str, status: int) -> None:
+    _odds_negative_cache[(sport_key, market)] = (time.time(), status)
+
 
 def _cache_get(cache: dict[str, tuple[float, dict[tuple[str, str], dict]]], league: str) -> dict[tuple[str, str], dict] | None:
     cached = cache.get(league)
@@ -196,6 +212,11 @@ def fetch_live_odds(league: str) -> dict[tuple[str, str], dict]:
         logger.warning("ODDS_API_KEY non configurée — cotes live désactivées")
         return {}
 
+    neg_status = _negative_cache_get(sport_key, "h2h")
+    if neg_status is not None:
+        logger.debug(f"Skip {league} (h2h) — negative cache (status={neg_status})")
+        return {}
+
     url = f"{ODDS_API_BASE}/{sport_key}/odds"
     params = {
         "apiKey": ODDS_API_KEY,
@@ -206,11 +227,10 @@ def fetch_live_odds(league: str) -> dict[tuple[str, str], dict]:
 
     try:
         resp = requests.get(url, params=params, timeout=10)
-        if resp.status_code == 401:
-            logger.error("ODDS_API_KEY invalide (401)")
-            return {}
-        if resp.status_code == 429:
-            logger.warning("Quota The Odds API atteint (429)")
+        if resp.status_code in (401, 422, 429):
+            _negative_cache_set(sport_key, "h2h", resp.status_code)
+            level = logger.error if resp.status_code == 401 else logger.warning
+            level(f"The Odds API {resp.status_code} pour {league} — skip {ODDS_NEGATIVE_TTL_SECONDS}s")
             return {}
         resp.raise_for_status()
 
@@ -219,6 +239,11 @@ def fetch_live_odds(league: str) -> dict[tuple[str, str], dict]:
         logger.info(f"The Odds API — requêtes restantes ce mois: {remaining}")
 
         data = resp.json()
+    except requests.HTTPError as e:
+        if e.response is not None and 400 <= e.response.status_code < 500:
+            _negative_cache_set(sport_key, "h2h", e.response.status_code)
+        logger.error(f"Erreur appel The Odds API: {e}")
+        return {}
     except Exception as e:
         logger.error(f"Erreur appel The Odds API: {e}")
         return {}
@@ -355,6 +380,11 @@ def _fetch_event_double_chance(
     if not event_id:
         return {}
 
+    # Negative cache au niveau du sport : si le marché double_chance n'est pas
+    # dispo pour cette ligue, on évite N appels par match.
+    if _negative_cache_get(sport_key, "double_chance") is not None:
+        return {}
+
     url = f"{ODDS_API_BASE}/{sport_key}/events/{event_id}/odds"
     params = {
         "apiKey": ODDS_API_KEY,
@@ -366,10 +396,16 @@ def _fetch_event_double_chance(
     try:
         resp = requests.get(url, params=params, timeout=10)
         if resp.status_code in (401, 422, 429):
-            logger.debug("Double chance indisponible event=%s status=%s", event_id, resp.status_code)
+            _negative_cache_set(sport_key, "double_chance", resp.status_code)
+            logger.debug("Double chance indisponible sport=%s status=%s — skip %ss", sport_key, resp.status_code, ODDS_NEGATIVE_TTL_SECONDS)
             return {}
         resp.raise_for_status()
         data = resp.json()
+    except requests.HTTPError as e:
+        if e.response is not None and 400 <= e.response.status_code < 500:
+            _negative_cache_set(sport_key, "double_chance", e.response.status_code)
+        logger.debug("Erreur double chance event=%s: %s", event_id, e)
+        return {}
     except Exception as e:
         logger.debug("Erreur double chance event=%s: %s", event_id, e)
         return {}
@@ -411,6 +447,11 @@ def fetch_bookmaker_odds(league: str) -> dict[tuple[str, str], dict]:
         logger.warning("ODDS_API_KEY non configurée — cotes bookmaker désactivées")
         return {}
 
+    neg_status = _negative_cache_get(sport_key, "multi")
+    if neg_status is not None:
+        logger.debug(f"Skip {league} (multi-market) — negative cache (status={neg_status})")
+        return {}
+
     url = f"{ODDS_API_BASE}/{sport_key}/odds"
     params = {
         "apiKey": ODDS_API_KEY,
@@ -422,13 +463,19 @@ def fetch_bookmaker_odds(league: str) -> dict[tuple[str, str], dict]:
 
     try:
         resp = requests.get(url, params=params, timeout=15)
-        if resp.status_code in (401, 429):
-            logger.warning(f"The Odds API erreur {resp.status_code}")
+        if resp.status_code in (401, 422, 429):
+            _negative_cache_set(sport_key, "multi", resp.status_code)
+            logger.warning(f"The Odds API multi-market {resp.status_code} pour {league} — skip {ODDS_NEGATIVE_TTL_SECONDS}s")
             return {}
         resp.raise_for_status()
         remaining = resp.headers.get("x-requests-remaining", "?")
         logger.info(f"The Odds API (multi-market) — requêtes restantes: {remaining}")
         data = resp.json()
+    except requests.HTTPError as e:
+        if e.response is not None and 400 <= e.response.status_code < 500:
+            _negative_cache_set(sport_key, "multi", e.response.status_code)
+        logger.error(f"Erreur The Odds API multi-market: {e}")
+        return {}
     except Exception as e:
         logger.error(f"Erreur The Odds API multi-market: {e}")
         return {}

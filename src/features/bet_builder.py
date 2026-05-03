@@ -5,6 +5,7 @@ Generates diverse, high-probability bet combinations unique to each match profil
 """
 
 import logging
+import itertools
 import math
 from typing import Optional
 
@@ -152,6 +153,9 @@ def generate_bet_builder(
     match_probs: dict,
     bookmaker_odds: Optional[dict] = None,
     max_selections: int = 4,
+    home_team: str = "Domicile",
+    away_team: str = "Exterieur",
+    availability: Optional[dict] = None,
 ) -> dict:
     """
     Generate a diverse, per-match bet combination using Poisson-modelled probabilities.
@@ -170,7 +174,48 @@ def generate_bet_builder(
 
     home_xg = match_stats.get("predicted_home_goals", 1.3)
     away_xg = match_stats.get("predicted_away_goals", 1.1)
+
+    availability = availability or {}
+    home_availability = availability.get("home", {}) or {}
+    away_availability = availability.get("away", {}) or {}
+
+    def _missing_count(team_availability: dict) -> int:
+        missing = team_availability.get("missing_players") or []
+        explicit = team_availability.get("injuries_count")
+        if isinstance(explicit, int) and explicit > len(missing):
+            return explicit
+        return len(missing)
+
+    home_missing = _missing_count(home_availability)
+    away_missing = _missing_count(away_availability)
+    home_squad_score = float(home_availability.get("squad_score", 1.0) or 1.0)
+    away_squad_score = float(away_availability.get("squad_score", 1.0) or 1.0)
+    home_lineup_confirmed = bool(home_availability.get("lineup_confirmed"))
+    away_lineup_confirmed = bool(away_availability.get("lineup_confirmed"))
+
+    lineup_weight = 1.15 if (home_lineup_confirmed or away_lineup_confirmed) else 0.75
+    home_absence_pressure = max(0.0, (1.0 - home_squad_score) * 0.7 + max(0, home_missing - away_missing) * 0.025)
+    away_absence_pressure = max(0.0, (1.0 - away_squad_score) * 0.7 + max(0, away_missing - home_missing) * 0.025)
+    if home_availability.get("key_player_out"):
+        home_absence_pressure += 0.05
+    if away_availability.get("key_player_out"):
+        away_absence_pressure += 0.05
+    home_absence_pressure = min(0.18, home_absence_pressure * lineup_weight)
+    away_absence_pressure = min(0.18, away_absence_pressure * lineup_weight)
+
+    home_xg = max(0.25, home_xg * (1 - home_absence_pressure) * (1 + away_absence_pressure * 0.45))
+    away_xg = max(0.25, away_xg * (1 - away_absence_pressure) * (1 + home_absence_pressure * 0.45))
+
+    p1 = max(3.0, p1 * (1 - home_absence_pressure) * (1 + away_absence_pressure * 0.55))
+    p2 = max(3.0, p2 * (1 - away_absence_pressure) * (1 + home_absence_pressure * 0.55))
+    pn = max(3.0, pn * (1 + abs(home_absence_pressure - away_absence_pressure) * 0.12))
+    result_total = p1 + pn + p2
+    if result_total > 0:
+        p1, pn, p2 = (p1 / result_total) * 100, (pn / result_total) * 100, (p2 / result_total) * 100
+
     total_xg = home_xg + away_xg
+    home_edge = home_xg - away_xg
+    away_edge = away_xg - home_xg
 
     # Build Poisson score matrix
     M = _build_score_matrix(home_xg, away_xg)
@@ -193,6 +238,7 @@ def generate_bet_builder(
     prob["over_35"] = 1 - _matrix_prob(M, lambda h, a: h + a <= 3)
     prob["under_25"] = _matrix_prob(M, lambda h, a: h + a <= 2)
     prob["under_35"] = _matrix_prob(M, lambda h, a: h + a <= 3)
+    prob["under_45"] = _matrix_prob(M, lambda h, a: h + a <= 4)
     prob["under_15"] = _matrix_prob(M, lambda h, a: h + a <= 1)
 
     # --- Team-specific goals (Poisson) ---
@@ -233,34 +279,44 @@ def generate_bet_builder(
     # ============================================================
     ALL_MARKETS = [
         # key, label_fr, category, prob_key, min_prob
-        ("home_win", "Victoire domicile", "Résultat", "home_win", 0.45),
-        ("away_win", "Victoire extérieur", "Résultat", "away_win", 0.45),
+        ("home_win", f"Victoire {home_team}", "Résultat", "home_win", 0.45),
+        ("away_win", f"Victoire {away_team}", "Résultat", "away_win", 0.45),
         ("draw", "Match nul", "Résultat", "draw", 0.34),
-        ("dc_home", "1 ou N (Double chance)", "Double Chance", "dc_home", 0.74),
-        ("dc_away", "N ou 2 (Double chance)", "Double Chance", "dc_away", 0.74),
+        ("dc_home", f"{home_team} ou nul", "Double Chance", "dc_home", 0.74),
+        ("dc_away", f"{away_team} ou nul", "Double Chance", "dc_away", 0.74),
+        ("over_05", "Plus de 0.5 but", "Buts", "over_05", 0.82),
         ("over_15", "Plus de 1.5 buts", "Buts", "over_15", 0.72),
         ("over_25", "Plus de 2.5 buts", "Buts", "over_25", 0.55),
         ("over_35", "Plus de 3.5 buts", "Buts", "over_35", 0.40),
         ("under_25", "Moins de 2.5 buts", "Buts", "under_25", 0.50),
         ("under_35", "Moins de 3.5 buts", "Buts", "under_35", 0.70),
+        ("under_45", "Moins de 4.5 buts", "Buts", "under_45", 0.78),
         ("under_15", "Moins de 1.5 buts", "Buts", "under_15", 0.30),
-        ("home_over_05", "Domicile marque au moins 1", "Buts Équipe", "home_over_05", 0.65),
-        ("home_over_15", "Domicile marque 2+", "Buts Équipe", "home_over_15", 0.35),
-        ("away_over_05", "Extérieur marque au moins 1", "Buts Équipe", "away_over_05", 0.55),
-        ("away_over_15", "Extérieur marque 2+", "Buts Équipe", "away_over_15", 0.30),
+        ("home_over_05", f"{home_team} marque au moins 1", "Buts Équipe", "home_over_05", 0.65),
+        ("home_over_15", f"{home_team} marque 2+", "Buts Équipe", "home_over_15", 0.35),
+        ("away_over_05", f"{away_team} marque au moins 1", "Buts Équipe", "away_over_05", 0.55),
+        ("away_over_15", f"{away_team} marque 2+", "Buts Équipe", "away_over_15", 0.30),
         ("btts_yes", "Les deux marquent", "BTTS", "btts_yes", 0.50),
         ("btts_no", "Au moins une équipe ne marque pas", "BTTS", "btts_no", 0.45),
-        ("home_cs", "Clean sheet domicile", "Défense", "home_cs", 0.30),
-        ("away_cs", "Clean sheet extérieur", "Défense", "away_cs", 0.25),
-        ("home_win_to_nil", "Victoire dom. sans encaisser", "Combo", "home_win_to_nil", 0.20),
-        ("away_win_to_nil", "Victoire ext. sans encaisser", "Combo", "away_win_to_nil", 0.15),
+        ("home_cs", f"Clean sheet {home_team}", "Défense", "home_cs", 0.30),
+        ("away_cs", f"Clean sheet {away_team}", "Défense", "away_cs", 0.25),
+        ("home_win_to_nil", f"{home_team} gagne sans encaisser", "Combo", "home_win_to_nil", 0.20),
+        ("away_win_to_nil", f"{away_team} gagne sans encaisser", "Combo", "away_win_to_nil", 0.15),
         ("btts_over_25", "BTTS + Plus de 2.5", "Combo", "btts_over_25", 0.35),
-        ("home_win_over_15", "Victoire dom. + Plus de 1.5", "Combo", "home_win_over_15", 0.35),
-        ("away_win_over_15", "Victoire ext. + Plus de 1.5", "Combo", "away_win_over_15", 0.25),
+        ("home_win_over_15", f"{home_team} gagne + Plus de 1.5", "Combo", "home_win_over_15", 0.35),
+        ("away_win_over_15", f"{away_team} gagne + Plus de 1.5", "Combo", "away_win_over_15", 0.25),
         ("goals_0_1", "0 ou 1 but dans le match", "Fourchette", "goals_0_1", 0.20),
         ("goals_2_3", "2 ou 3 buts dans le match", "Fourchette", "goals_2_3", 0.48),
         ("goals_4_plus", "4 buts ou plus", "Fourchette", "goals_4_plus", 0.25),
     ]
+    GENERIC_MARKETS = {"over_05", "under_45", "under_35", "over_15"}
+    TEAM_SPECIFIC_MARKETS = {
+        "home_win", "away_win", "dc_home", "dc_away",
+        "home_over_05", "home_over_15", "away_over_05", "away_over_15",
+        "home_cs", "away_cs", "home_win_to_nil", "away_win_to_nil",
+        "home_win_over_15", "away_win_over_15",
+    }
+    TACTICAL_MARKETS = {"btts_yes", "btts_no", "over_25", "over_35", "under_25", "under_15", "goals_0_1", "goals_2_3", "goals_4_plus", "btts_over_25"}
 
     # Filter to only markets above their minimum probability
     candidates = []
@@ -289,8 +345,8 @@ def generate_bet_builder(
         elif key in ("dc_12",):
             bm_odds, bm_name = _best_bookmaker_odds(double_chance_bk, "home_away")
             all_odds = _all_bookmaker_odds_for_market(double_chance_bk, "home_away")
-        elif key in ("over_15", "over_25", "over_35"):
-            point = {"over_15": 1.5, "over_25": 2.5, "over_35": 3.5}[key]
+        elif key in ("over_05", "over_15", "over_25", "over_35"):
+            point = {"over_05": 0.5, "over_15": 1.5, "over_25": 2.5, "over_35": 3.5}[key]
             bm_odds, bm_name = _totals_odds(totals_bk, point)
             all_odds = _all_totals_odds(totals_bk, point)
         elif key in ("btts_yes",):
@@ -300,8 +356,29 @@ def generate_bet_builder(
             bm_odds, bm_name = _best_bookmaker_odds(btts_bk, "no")
             all_odds = _all_bookmaker_odds_for_market(btts_bk, "no")
 
-        odds_val = bm_odds if bm_odds > 0 else _fair_odds(p)
+        has_real_odds = bm_odds > 0
+        odds_val = bm_odds if has_real_odds else _fair_odds(p)
         odds_val = max(1.01, min(30.0, odds_val))
+        edge = round(((p * odds_val) - 1) * 100, 1) if has_real_odds else 0.0
+        specificity = 0.2
+        if key in TEAM_SPECIFIC_MARKETS:
+            specificity += 0.45
+        if key in TACTICAL_MARKETS:
+            specificity += 0.25
+        if key in GENERIC_MARKETS:
+            specificity -= 0.35
+        if home_edge > 0.25 and key.startswith("home"):
+            specificity += 0.15
+        if away_edge > 0.25 and key.startswith("away"):
+            specificity += 0.15
+        if total_xg >= 3.0 and key in {"over_25", "over_35", "btts_yes", "btts_over_25", "goals_4_plus"}:
+            specificity += 0.15
+        if total_xg <= 2.2 and key in {"under_25", "under_35", "btts_no", "goals_0_1", "home_cs", "away_cs"}:
+            specificity += 0.15
+        if home_absence_pressure > away_absence_pressure + 0.03 and key.startswith("away"):
+            specificity += 0.12
+        if away_absence_pressure > home_absence_pressure + 0.03 and key.startswith("home"):
+            specificity += 0.12
 
         candidates.append({
             "key": key,
@@ -312,6 +389,10 @@ def generate_bet_builder(
             "odds": odds_val,
             "bookmaker": bm_name,
             "all_odds": all_odds,
+            "odds_source": "bookmaker" if has_real_odds else "model_fair",
+            "edge": edge,
+            "specificity": round(max(0.0, min(1.0, specificity)), 3),
+            "generic": key in GENERIC_MARKETS,
             "_prob": p,         # internal, for sorting
             "_profile": profile,
         })
@@ -323,41 +404,42 @@ def generate_bet_builder(
     # Smart selection: pick diverse, non-redundant, high-probability bets
     # ============================================================
     CONFLICTS: dict[str, set[str]] = {
-        "home_win": {"away_win", "draw", "dc_away", "away_win_to_nil", "away_cs", "away_win_over_15"},
-        "away_win": {"home_win", "draw", "dc_home", "home_win_to_nil", "home_cs", "home_win_over_15"},
+        "home_win": {"home_over_05", "away_win", "draw", "dc_home", "dc_away", "away_win_to_nil", "away_cs", "away_win_over_15"},
+        "away_win": {"away_over_05", "home_win", "draw", "dc_home", "dc_away", "home_win_to_nil", "home_cs", "home_win_over_15"},
         "draw": {"home_win", "away_win", "dc_12", "home_win_to_nil", "away_win_to_nil",
                  "home_win_over_15", "away_win_over_15"},
-        "dc_home": {"dc_away", "away_win", "away_win_to_nil", "away_win_over_15"},
-        "dc_away": {"dc_home", "home_win", "home_win_to_nil", "home_win_over_15"},
+        "dc_home": {"dc_away", "home_win", "away_win", "home_win_to_nil", "away_win_to_nil", "home_win_over_15", "away_win_over_15"},
+        "dc_away": {"dc_home", "home_win", "away_win", "home_win_to_nil", "away_win_to_nil", "home_win_over_15", "away_win_over_15"},
         "dc_12": {"draw"},
         # Over/Under conflicts
-        "over_05": {"under_15", "goals_0_1"},
-        "over_15": {"under_15", "goals_0_1"},
-        "over_25": {"under_25", "under_15", "goals_0_1"},
-        "over_35": {"under_35", "under_25", "under_15", "goals_0_1", "goals_2_3"},
-        "under_25": {"over_25", "over_35", "goals_4_plus", "btts_over_25"},
-        "under_35": {"over_35", "goals_4_plus"},
-        "under_15": {"over_15", "over_25", "over_35", "btts_yes", "btts_over_25",
+        "over_05": {"under_15", "goals_0_1", "home_over_05", "away_over_05"},
+        "over_15": {"under_15", "goals_0_1", "home_win_over_15", "away_win_over_15"},
+        "over_25": {"under_25", "under_15", "goals_0_1", "btts_over_25"},
+        "over_35": {"under_45", "under_35", "under_25", "under_15", "goals_0_1", "goals_2_3", "goals_4_plus"},
+        "under_25": {"over_25", "over_35", "goals_4_plus", "btts_over_25", "under_45", "under_35", "under_15"},
+        "under_35": {"over_35", "goals_4_plus", "under_45", "under_25", "under_15"},
+        "under_45": {"over_35", "goals_4_plus", "under_35", "under_25", "under_15"},
+        "under_15": {"over_15", "over_25", "over_35", "btts_yes", "btts_over_25", "under_45", "under_35", "under_25",
                      "goals_2_3", "goals_4_plus"},
         # BTTS conflicts
-        "btts_yes": {"btts_no", "home_cs", "away_cs", "home_win_to_nil", "away_win_to_nil", "under_15"},
+        "btts_yes": {"btts_no", "home_cs", "away_cs", "home_win_to_nil", "away_win_to_nil", "btts_over_25", "under_15"},
         "btts_no": {"btts_yes", "btts_over_25"},
         # Team goals
-        "home_over_05": {"away_cs"},
+        "home_over_05": {"away_cs", "home_win_to_nil"},
         "home_over_15": {"away_cs"},
-        "away_over_05": {"home_cs"},
+        "away_over_05": {"home_cs", "away_win_to_nil"},
         "away_over_15": {"home_cs"},
         # Clean sheet
         "home_cs": {"away_over_05", "away_over_15", "btts_yes", "btts_over_25"},
         "away_cs": {"home_over_05", "home_over_15", "btts_yes", "btts_over_25"},
         # Combos
-        "home_win_to_nil": {"away_win", "draw", "btts_yes", "away_over_05"},
-        "away_win_to_nil": {"home_win", "draw", "btts_yes", "home_over_05"},
+        "home_win_to_nil": {"home_win", "dc_home", "home_over_05", "away_win", "draw", "btts_yes", "btts_no", "home_cs", "away_over_05"},
+        "away_win_to_nil": {"away_win", "dc_away", "away_over_05", "home_win", "draw", "btts_yes", "btts_no", "away_cs", "home_over_05"},
         "btts_over_25": {"btts_no", "under_25", "under_15", "home_cs", "away_cs"},
-        "home_win_over_15": {"away_win", "draw", "dc_away"},
-        "away_win_over_15": {"home_win", "draw", "dc_home"},
+        "home_win_over_15": {"home_win", "dc_home", "home_over_05", "home_over_15", "over_15", "away_win", "draw", "dc_away"},
+        "away_win_over_15": {"away_win", "dc_away", "away_over_05", "away_over_15", "over_15", "home_win", "draw", "dc_home"},
         # Ranges
-        "goals_0_1": {"over_15", "over_25", "over_35", "goals_2_3", "goals_4_plus"},
+        "goals_0_1": {"over_15", "over_25", "over_35", "under_15", "goals_2_3", "goals_4_plus"},
         "goals_2_3": {"over_35", "goals_0_1", "goals_4_plus", "under_15"},
         "goals_4_plus": {"under_25", "under_35", "under_15", "goals_0_1", "goals_2_3"},
     }
@@ -381,67 +463,311 @@ def generate_bet_builder(
         "balanced": {"over_25", "btts_yes", "dc_12", "goals_2_3"},
     }
     boosted = PROFILE_BOOSTS.get(profile, set())
+    availability_notes: list[str] = []
+    if home_missing or away_missing:
+        availability_notes.append(f"Absents: {home_team} {home_missing}, {away_team} {away_missing}.")
+    if home_lineup_confirmed or away_lineup_confirmed:
+        confirmed = []
+        if home_lineup_confirmed:
+            confirmed.append(home_team)
+        if away_lineup_confirmed:
+            confirmed.append(away_team)
+        availability_notes.append(f"Compo confirmee: {', '.join(confirmed)}.")
+    if home_availability.get("key_player_out"):
+        availability_notes.append(f"Joueur important absent cote {home_team}.")
+    if away_availability.get("key_player_out"):
+        availability_notes.append(f"Joueur important absent cote {away_team}.")
+    availability_note = " ".join(availability_notes)
 
-    # Apply sort: boosted candidates first (still sorted by prob within each group)
-    boosted_cands = [c for c in candidates if c["key"] in boosted]
-    other_cands = [c for c in candidates if c["key"] not in boosted]
-    ordered = boosted_cands + other_cands
+    def _conflicts_with_selected(candidate: dict, selected: list[dict]) -> bool:
+        key = candidate["key"]
+        for selected_item in selected:
+            selected_key = selected_item["key"]
+            if selected_key in CONFLICTS.get(key, set()) or key in CONFLICTS.get(selected_key, set()):
+                return True
+        return False
 
-    selections: list[dict] = []
-    selected_keys: set[str] = set()
-    cat_counts: dict[str, int] = {}
+    def _clean_selection(selection: dict) -> dict:
+        return {k: v for k, v in selection.items() if not k.startswith("_")}
 
-    for c in ordered:
-        if len(selections) >= max_selections:
-            break
-        key = c["key"]
+    def _candidate_score(candidate: dict, recipe: dict, used_keys: set[str]) -> float:
+        edge = max(float(candidate.get("edge") or 0.0), 0.0)
+        profile_bonus = recipe["profile_weight"] if candidate["key"] in boosted else 0.0
+        real_odds_bonus = recipe["real_odds_bonus"] if candidate.get("odds_source") == "bookmaker" else 0.0
+        reuse_penalty = recipe["reuse_penalty"] if candidate["key"] in used_keys else 0.0
+        generic_penalty = recipe.get("generic_penalty", 0.0) if candidate.get("generic") else 0.0
+        return (
+            candidate["_prob"] * recipe["prob_weight"]
+            + edge * recipe["edge_weight"]
+            + min(candidate["odds"], 8.0) * recipe["odds_weight"]
+            + candidate.get("specificity", 0.0) * recipe.get("specificity_weight", 0.0)
+            + profile_bonus
+            + real_odds_bonus
+            - reuse_penalty
+            - generic_penalty
+        )
 
-        # Skip if blocked by conflict
-        blocked = CONFLICTS.get(key, set())
-        if blocked & selected_keys:
+    def _combined_pct(legs: list[dict]) -> float:
+        combined_prob = 1.0
+        for leg in legs:
+            combined_prob *= leg["confidence"] / 100
+        return round(combined_prob * 100, 1)
+
+    def _valid_leg_set(legs: tuple[dict, ...], recipe: dict, used_keys: set[str]) -> bool:
+        cat_counts: dict[str, int] = {}
+        selected: list[dict] = []
+        specific_count = 0
+        generic_count = 0
+        reused_count = 0
+
+        for c in legs:
+            if c["_prob"] < recipe["min_prob"]:
+                return False
+            if c["odds"] < 1.05:
+                return False
+            if c["_prob"] > 0.97 and c["odds"] < 1.05:
+                return False
+            if _conflicts_with_selected(c, selected):
+                return False
+
+            cat = c["category"]
+            cat_limit = recipe.get("category_limits", CATEGORY_LIMITS).get(cat, 2)
+            if cat_counts.get(cat, 0) >= cat_limit:
+                return False
+
+            selected.append(c)
+            cat_counts[cat] = cat_counts.get(cat, 0) + 1
+            if c.get("specificity", 0.0) >= 0.5:
+                specific_count += 1
+            if c.get("generic"):
+                generic_count += 1
+            if c["key"] in used_keys:
+                reused_count += 1
+
+        if specific_count < recipe.get("min_specific_legs", 1):
+            return False
+        if generic_count > recipe.get("max_generic_legs", 0):
+            return False
+        if reused_count > recipe.get("max_reused_legs", 0):
+            return False
+
+        return True
+
+    def _set_score(legs: tuple[dict, ...], recipe: dict, used_keys: set[str]) -> float:
+        combined_pct = _combined_pct(list(legs))
+        range_min = recipe["range_min"]
+        range_max = recipe["range_max"]
+        target = recipe["target_confidence"]
+        if combined_pct < range_min:
+            range_penalty = range_min - combined_pct
+        elif combined_pct > range_max:
+            range_penalty = combined_pct - range_max
+        else:
+            range_penalty = 0.0
+
+        categories = {leg["category"] for leg in legs}
+        average_leg_score = sum(_candidate_score(leg, recipe, used_keys) for leg in legs) / len(legs)
+        return (
+            average_leg_score
+            + len(categories) * 2.5
+            - abs(combined_pct - target) * recipe.get("target_penalty", 1.2)
+            - range_penalty * recipe.get("range_penalty", 8.0)
+        )
+
+    def _pick_combo_legs(recipe: dict, used_keys: set[str]) -> list[dict]:
+        def find_best(min_prob: float) -> list[dict]:
+            recipe["min_prob"] = min_prob
+            pool = [
+                c for c in candidates
+                if c["_prob"] >= min_prob and c["odds"] >= 1.05
+            ]
+            best: tuple[float, tuple[dict, ...]] | None = None
+
+            for size in range(recipe["min_legs"], recipe["max_legs"] + 1):
+                for legs in itertools.combinations(pool, size):
+                    if not _valid_leg_set(legs, recipe, used_keys):
+                        continue
+                    score = _set_score(legs, recipe, used_keys)
+                    if best is None or score > best[0]:
+                        best = (score, legs)
+
+            return list(best[1]) if best else []
+
+        original_min_prob = recipe["min_prob"]
+        original_max_reused = recipe.get("max_reused_legs", 0)
+        try:
+            legs = find_best(original_min_prob)
+            if legs:
+                return legs
+            legs = find_best(max(0.18, original_min_prob - 0.18))
+            if legs:
+                return legs
+            if used_keys:
+                recipe["max_reused_legs"] = 1
+                return find_best(max(0.18, original_min_prob - 0.18))
+            return []
+        finally:
+            recipe["min_prob"] = original_min_prob
+            recipe["max_reused_legs"] = original_max_reused
+
+    def _build_combo(recipe: dict, used_keys: set[str]) -> dict | None:
+        legs = _pick_combo_legs(recipe, used_keys)
+        if len(legs) < recipe["min_legs"]:
+            return None
+
+        combined_odds = 1.0
+        combined_prob = 1.0
+        for leg in legs:
+            combined_odds *= leg["odds"]
+            combined_prob *= leg["confidence"] / 100
+
+        combined_odds = round(combined_odds, 2)
+        combined_pct = round(combined_prob * 100, 1)
+        edge = round(((combined_prob * combined_odds) - 1) * 100, 1)
+
+        return {
+            "id": recipe["id"],
+            "profile": recipe["id"],
+            "label": recipe["label"],
+            "rationale": f"{recipe['rationale']} {availability_note}".strip(),
+            "selections": [_clean_selection(leg) for leg in legs],
+            "combined_odds": combined_odds,
+            "combined_confidence": round(combined_pct),
+            "combined_probability": combined_pct,
+            "confidence_range": {
+                "min": recipe["range_min"],
+                "max": recipe["range_max"],
+                "label": recipe["range_label"],
+            },
+            "edge": edge,
+            "method": "poisson_xg_market_scoring",
+            "source": "winamax_betclic" if has_bookmaker else "ai_model",
+            "availability_impact": {
+                "home_missing": home_missing,
+                "away_missing": away_missing,
+                "home_lineup_confirmed": home_lineup_confirmed,
+                "away_lineup_confirmed": away_lineup_confirmed,
+                "home_pressure": round(home_absence_pressure, 3),
+                "away_pressure": round(away_absence_pressure, 3),
+            },
+        }
+
+    combo_recipes = [
+        {
+            "id": "safe",
+            "label": "66-100%",
+            "range_label": "100% - 66%",
+            "range_min": 66,
+            "range_max": 100,
+            "target_confidence": 78,
+            "min_prob": 0.58,
+            "min_legs": 2,
+            "max_legs": min(2, max_selections),
+            "prob_weight": 105.0,
+            "edge_weight": 0.35,
+            "odds_weight": -1.0,
+            "profile_weight": 10.0,
+            "real_odds_bonus": 3.0,
+            "reuse_penalty": 14.0,
+            "specificity_weight": 24.0,
+            "generic_penalty": 18.0,
+            "min_specific_legs": 1,
+            "max_generic_legs": 1,
+            "max_reused_legs": 0,
+            "target_penalty": 1.5,
+            "range_penalty": 12.0,
+            "rationale": "Ticket haute confiance: la probabilite combinee vise la tranche 66-100%, sans conflit entre marches.",
+            "category_limits": {**CATEGORY_LIMITS, "Buts": 2},
+        },
+        {
+            "id": "balanced",
+            "label": "33-66%",
+            "range_label": "66% - 33%",
+            "range_min": 33,
+            "range_max": 66,
+            "target_confidence": 50,
+            "min_prob": 0.38,
+            "min_legs": 2,
+            "max_legs": min(2, max_selections),
+            "prob_weight": 78.0,
+            "edge_weight": 1.0,
+            "odds_weight": 1.1,
+            "profile_weight": 8.0,
+            "real_odds_bonus": 4.0,
+            "reuse_penalty": 10.0,
+            "specificity_weight": 28.0,
+            "generic_penalty": 16.0,
+            "min_specific_legs": 1,
+            "max_generic_legs": 1,
+            "max_reused_legs": 0,
+            "target_penalty": 1.3,
+            "range_penalty": 10.0,
+            "rationale": "Ticket intermediaire: il vise la tranche 33-66% en equilibrant confiance IA et rendement.",
+            "category_limits": CATEGORY_LIMITS,
+        },
+        {
+            "id": "bold",
+            "label": "0-33%",
+            "range_label": "33% - 0%",
+            "range_min": 0,
+            "range_max": 33,
+            "target_confidence": 22,
+            "min_prob": 0.24,
+            "min_legs": 2,
+            "max_legs": max(2, min(3, max_selections)),
+            "prob_weight": 62.0,
+            "edge_weight": 1.25,
+            "odds_weight": 2.4,
+            "profile_weight": 7.0,
+            "real_odds_bonus": 5.0,
+            "reuse_penalty": 7.0,
+            "specificity_weight": 32.0,
+            "generic_penalty": 14.0,
+            "min_specific_legs": 2,
+            "max_generic_legs": 1,
+            "max_reused_legs": 0,
+            "target_penalty": 1.0,
+            "range_penalty": 8.0,
+            "rationale": "Ticket rendement: il reste coherent avec le modele, mais sa probabilite combinee vise 0-33%.",
+            "category_limits": CATEGORY_LIMITS,
+        },
+    ]
+
+    combos: list[dict] = []
+    used_keys: set[str] = set()
+    seen_signatures: set[str] = set()
+    for recipe in combo_recipes:
+        combo = _build_combo(recipe, used_keys)
+        if not combo:
             continue
-
-        # Skip if category full
-        cat = c["category"]
-        limit = CATEGORY_LIMITS.get(cat, 2)
-        if cat_counts.get(cat, 0) >= limit:
+        signature = "|".join(selection["key"] for selection in combo["selections"])
+        if signature in seen_signatures:
             continue
+        combos.append(combo)
+        seen_signatures.add(signature)
+        used_keys.update(selection["key"] for selection in combo["selections"])
 
-        # Skip trivial bets (>95% prob, odds < 1.08) — boring, no value
-        if c["_prob"] > 0.95 and c["odds"] < 1.08:
-            continue
+    if not combos:
+        return {
+            "selections": [],
+            "combined_odds": 1.0,
+            "combined_confidence": 0,
+            "source": "none",
+            "profile": profile,
+            "combos": [],
+        }
 
-        selections.append(c)
-        selected_keys.add(key)
-        cat_counts[cat] = cat_counts.get(cat, 0) + 1
-
-    # Clean internal keys
-    for s in selections:
-        s.pop("_prob", None)
-        s.pop("_profile", None)
-
-    if not selections:
-        return {"selections": [], "combined_odds": 1.0, "combined_confidence": 0, "source": "none"}
-
-    combined_odds = 1.0
-    for s in selections:
-        combined_odds *= s["odds"]
-    combined_odds = round(combined_odds, 2)
-
-    combined_conf = 1.0
-    for s in selections:
-        combined_conf *= (s["confidence"] / 100)
-    combined_pct = round(combined_conf * 100)
+    primary_combo = combos[1] if len(combos) > 1 else combos[0]
 
     return {
-        "selections": selections,
-        "combined_odds": combined_odds,
-        "combined_confidence": combined_pct,
+        "selections": primary_combo["selections"],
+        "combined_odds": primary_combo["combined_odds"],
+        "combined_confidence": primary_combo["combined_confidence"],
         "source": "winamax_betclic" if has_bookmaker else "ai_model",
         "profile": profile,
+        "method": "poisson_xg_market_scoring",
+        "combos": combos,
     }
-
-
 # ============================================================
 # Daily tips (also uses Poisson)
 # ============================================================

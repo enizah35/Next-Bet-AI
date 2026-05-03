@@ -1,13 +1,14 @@
 import TipsClient from "./TipsClient";
+import { getServerApiUrl } from "@/utils/api";
 
 export const revalidate = 60;
 
 export default async function TipsPage() {
-  const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").trim();
+  const apiUrl = getServerApiUrl();
   let initialMatches = [];
 
   try {
-    const res = await fetch(`${apiUrl}/predictions/upcoming?fast=true&limit=40`, {
+    const res = await fetch(`${apiUrl}/predictions/upcoming/full-cached?limit=300`, {
       signal: AbortSignal.timeout(25000),
     });
     if (res.ok) {

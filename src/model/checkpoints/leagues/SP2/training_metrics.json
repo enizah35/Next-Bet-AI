@@ -1,0 +1,179 @@
+{
+  "best_val_loss": 1.0634,
+  "best_val_acc": 0.4345,
+  "epochs_trained": 31,
+  "model_config": {
+    "input_dim": 54,
+    "hidden_dim": 128,
+    "num_residual_blocks": 3,
+    "dropout": 0.3,
+    "num_classes": 3
+  },
+  "test_accuracy": 0.487,
+  "per_class_accuracy": {
+    "H": 0.669,
+    "D": 0.291,
+    "A": 0.189
+  },
+  "test_samples": 733,
+  "ensemble_size": 1,
+  "temperature": 1.5,
+  "best_approach": "xgboost",
+  "all_results": {
+    "nn_ensemble": 0.4611,
+    "xgboost": 0.487,
+    "lightgbm": 0.472,
+    "stacking": 0.4393
+  },
+  "market_baseline_test_accuracy": 0.5007,
+  "market_baseline_full_accuracy": 0.4719,
+  "best_vs_market_delta": -0.0137,
+  "draw_specialist": {
+    "selected": 241,
+    "precision": 0.2988,
+    "recall": 0.3673
+  },
+  "rows_with_feature_nan": 3297,
+  "total_feature_nan": 20082,
+  "use_class_weights": false,
+  "league_code": "SP2",
+  "artifact_dir": "C:\\Bordel\\Projet\\next-bet-ai\\src\\model\\checkpoints\\leagues\\SP2",
+  "confidence_bands": {
+    "nn_ensemble": {
+      "0.5": {
+        "selected": 169,
+        "coverage": 0.2306,
+        "accuracy": 0.6095
+      },
+      "0.55": {
+        "selected": 104,
+        "coverage": 0.1419,
+        "accuracy": 0.6827
+      },
+      "0.6": {
+        "selected": 65,
+        "coverage": 0.0887,
+        "accuracy": 0.7231
+      },
+      "0.65": {
+        "selected": 35,
+        "coverage": 0.0477,
+        "accuracy": 0.7429
+      },
+      "0.7": {
+        "selected": 15,
+        "coverage": 0.0205,
+        "accuracy": 0.6667
+      }
+    },
+    "xgboost": {
+      "0.5": {
+        "selected": 207,
+        "coverage": 0.2824,
+        "accuracy": 0.6522
+      },
+      "0.55": {
+        "selected": 114,
+        "coverage": 0.1555,
+        "accuracy": 0.6842
+      },
+      "0.6": {
+        "selected": 28,
+        "coverage": 0.0382,
+        "accuracy": 0.7857
+      },
+      "0.65": {
+        "selected": 0,
+        "coverage": 0.0,
+        "accuracy": null
+      },
+      "0.7": {
+        "selected": 0,
+        "coverage": 0.0,
+        "accuracy": null
+      }
+    },
+    "lightgbm": {
+      "0.5": {
+        "selected": 187,
+        "coverage": 0.2551,
+        "accuracy": 0.615
+      },
+      "0.55": {
+        "selected": 53,
+        "coverage": 0.0723,
+        "accuracy": 0.7547
+      },
+      "0.6": {
+        "selected": 3,
+        "coverage": 0.0041,
+        "accuracy": 1.0
+      },
+      "0.65": {
+        "selected": 0,
+        "coverage": 0.0,
+        "accuracy": null
+      },
+      "0.7": {
+        "selected": 0,
+        "coverage": 0.0,
+        "accuracy": null
+      }
+    },
+    "stacking": {
+      "0.5": {
+        "selected": 477,
+        "coverage": 0.6508,
+        "accuracy": 0.4444
+      },
+      "0.55": {
+        "selected": 353,
+        "coverage": 0.4816,
+        "accuracy": 0.4589
+      },
+      "0.6": {
+        "selected": 267,
+        "coverage": 0.3643,
+        "accuracy": 0.4757
+      },
+      "0.65": {
+        "selected": 181,
+        "coverage": 0.2469,
+        "accuracy": 0.5083
+      },
+      "0.7": {
+        "selected": 127,
+        "coverage": 0.1733,
+        "accuracy": 0.5118
+      }
+    }
+  },
+  "best_confidence_bands": {
+    "0.5": {
+      "selected": 207,
+      "coverage": 0.2824,
+      "accuracy": 0.6522
+    },
+    "0.55": {
+      "selected": 114,
+      "coverage": 0.1555,
+      "accuracy": 0.6842
+    },
+    "0.6": {
+      "selected": 28,
+      "coverage": 0.0382,
+      "accuracy": 0.7857
+    },
+    "0.65": {
+      "selected": 0,
+      "coverage": 0.0,
+      "accuracy": null
+    },
+    "0.7": {
+      "selected": 0,
+      "coverage": 0.0,
+      "accuracy": null
+    }
+  },
+  "num_features": 54
+}

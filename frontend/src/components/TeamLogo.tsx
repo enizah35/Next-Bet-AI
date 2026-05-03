@@ -288,19 +288,221 @@ const TEAM_COLORS: Record<string, { bg: string; fg: string; mono: string }> = {
   "Paris FC": { bg: "#E30613", fg: "#003087", mono: "PFC" },
 };
 
+const normalizeTeamName = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toLowerCase();
+
+const LOGO_IDS_BY_NORMALIZED_NAME = Object.fromEntries(
+  Object.entries(LOGO_IDS).map(([team, id]) => [normalizeTeamName(team), id]),
+);
+
+const ESPN_LOGO_IDS_BY_NORMALIZED_NAME: Record<string, number> = {
+  "afc bournemouth": 349,
+  "bournemouth": 349,
+  "brentford": 337,
+  "brighton and hove albion": 331,
+  "man utd": 360,
+  "manchester utd": 360,
+  "nottm forest": 393,
+  "nottingham f": 393,
+  "sheff utd": 398,
+  "sheffield utd": 398,
+  "sheff wed": 399,
+  "sheffield wed": 399,
+  "bristol city": 333,
+  "charlton": 372,
+  "charlton athletic": 372,
+  "coventry": 388,
+  "coventry city": 388,
+  "derby": 374,
+  "derby county": 374,
+  "millwall": 391,
+  "norwich city": 381,
+  "oxford united": 311,
+  "oxford utd": 311,
+  "portsmouth": 385,
+  "preston": 394,
+  "preston north end": 394,
+  "wrexham": 352,
+  "le havre ac": 3236,
+  "annecy": 18066,
+  "nancy": 3267,
+  "as nancy lorraine": 3267,
+  "boulogne": 7869,
+  "clermont foot": 3171,
+  "dunkerque": 7732,
+  "grenoble": 6994,
+  "le mans": 2697,
+  "pau": 10678,
+  "red star fc": 11884,
+  "red star fc 93": 11884,
+  "rodez aveyron": 7719,
+  "sc amiens": 3335,
+  "stade laval": 3266,
+  "troyes": 170,
+  "borussia monchengladbach": 268,
+  "gladbach": 268,
+  "fc cologne": 122,
+  "cologne": 122,
+  "koln": 122,
+  "st pauli": 270,
+  "magdeburg": 10382,
+  "1 fc magdeburg": 10382,
+  "arminia bielefeld": 2506,
+  "bielefeld": 2506,
+  "dynamo dresden": 7017,
+  "d dresden": 7017,
+  "fortuna dusseldorf": 9707,
+  "f dusseldorf": 9707,
+  "holstein kiel": 7884,
+  "karlsruher sc": 4471,
+  "karlsruher": 4471,
+  "paderborn": 3307,
+  "sc paderborn 07": 3307,
+  "greuther furth": 3070,
+  "spvgg greuther furth": 3070,
+  "elversberg": 10388,
+  "sv 07 elversberg": 10388,
+  "eintracht braunschweig": 3067,
+  "tsv eintracht braunschweig": 3067,
+  "celta vigo": 85,
+  "elche": 3751,
+  "getafe": 2922,
+  "rayo": 101,
+  "rayo vallecano": 101,
+  "real oviedo": 92,
+  "albacete": 2737,
+  "almeria": 6832,
+  "burgos": 12597,
+  "cadiz": 3842,
+  "cordoba": 8447,
+  "castellon": 4438,
+  "ceuta": 5404,
+  "cultural leonesa": 10629,
+  "leonesa": 10629,
+  "deportivo la coruna": 90,
+  "deportivo": 90,
+  "fc andorra": 20179,
+  "granada": 3747,
+  "huesca": 5413,
+  "las palmas": 98,
+  "malaga": 99,
+  "mirandes": 4515,
+  "racing santander": 87,
+  "real sociedad ii": 20983,
+  "real zaragoza": 91,
+  "as roma": 104,
+  "como": 2572,
+  "carrarese": 3988,
+  "catanzaro": 3257,
+  "cesena": 3337,
+  "empoli": 2574,
+  "frosinone": 4057,
+  "juve stabia": 3975,
+  "mantova": 3991,
+  "monza": 4007,
+  "padova": 3952,
+  "pescara": 3290,
+  "reggiana": 3942,
+  "spezia": 4056,
+  "sudtirol": 11139,
+  "avellino": 4055,
+  "virtus entella": 11137,
+  "fc groningen": 145,
+  "fc twente": 152,
+  "fc utrecht": 153,
+  "fc volendam": 2727,
+  "fortuna sittard": 143,
+  "excelsior": 2566,
+  "go ahead eagles": 3706,
+  "heracles": 3708,
+  "heracles almelo": 3708,
+  "nac breda": 141,
+  "nec": 147,
+  "nec nijmegen": 147,
+  "pec zwolle": 2565,
+  "sparta": 151,
+  "sparta rotterdam": 151,
+  "telstar": 3735,
+  "alverca": 21613,
+  "arouca": 15784,
+  "avs": 22064,
+  "nacional": 3472,
+  "casa pia": 21581,
+  "estoril": 12216,
+  "estrela": 21610,
+  "fc famalicao": 12698,
+  "fc porto": 437,
+  "gil vicente": 3699,
+  "moreirense": 3696,
+  "santa clara": 12215,
+  "tondela": 12706,
+  "vitoria de guimaraes": 5309,
+  "vitoria": 5309,
+  "caykur rizespor": 7656,
+  "eyupspor": 20729,
+  "fatih karagumruk": 20736,
+  "gaziantep": 20070,
+  "gaziantep fk": 20070,
+  "genclerbirligi": 996,
+  "goztepe": 789,
+  "istanbul basaksehir": 7914,
+  "basaksehir": 7914,
+  "kasimpasa": 6870,
+  "kayserispor": 3643,
+  "kocaelispor": 995,
+  "konyaspor": 7648,
+  "samsunspor": 11429,
+  "cercle brugge": 3610,
+  "dender": 7878,
+  "kv mechelen": 7879,
+  "kvc westerlo": 606,
+  "westerlo": 606,
+  "oh leuven": 5579,
+  "oud heverlee leuven": 5579,
+  "raal la louviere": 131235,
+  "la louviere": 131235,
+  "royal charleroi": 3616,
+  "royal charleroi sc": 3616,
+  "sint truidense": 936,
+  "zulte waregem": 4691,
+  "dundee united": 264,
+  "dundee utd": 264,
+  "falkirk": 254,
+  "kilmarnock": 260,
+  "livingston": 259,
+};
+
+const getLogoUrl = (name: string, explicitLogoUrl?: string | null) => {
+  if (explicitLogoUrl) return explicitLogoUrl;
+
+  const normalized = normalizeTeamName(name);
+  const apiSportsId = LOGO_IDS[name] ?? LOGO_IDS_BY_NORMALIZED_NAME[normalized];
+  if (apiSportsId) return `https://media.api-sports.io/football/teams/${apiSportsId}.png`;
+
+  const espnId = ESPN_LOGO_IDS_BY_NORMALIZED_NAME[normalized];
+  if (espnId) return `https://a.espncdn.com/i/teamlogos/soccer/500/${espnId}.png`;
+};
+
 export function getTeam(name: string) {
   return TEAM_COLORS[name] || { bg: "#555", fg: "#fff", mono: name.slice(0, 3).toUpperCase() };
 }
 
-export function TeamLogo({ name, size = 40 }: { name: string; size?: number }) {
-  const [failed, setFailed] = useState(false);
+export function TeamLogo({ name, size = 40, logoUrl }: { name: string; size?: number; logoUrl?: string | null }) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const t = getTeam(name);
-  const logoId = LOGO_IDS[name];
+  const mappedLogoUrl = getLogoUrl(name);
+  const resolvedLogoUrl = logoUrl && failedSrc !== logoUrl ? logoUrl : mappedLogoUrl;
   const fontSize = size <= 28 ? 9 : size <= 40 ? 11 : 14;
 
   const radius = Math.round(size * 0.22);
 
-  if (logoId && !failed) {
+  if (resolvedLogoUrl && failedSrc !== resolvedLogoUrl) {
     const pad = Math.round(size * 0.1);
     return (
       <div
@@ -313,11 +515,11 @@ export function TeamLogo({ name, size = 40 }: { name: string; size?: number }) {
         }}
       >
         <img
-          src={`https://media.api-sports.io/football/teams/${logoId}.png`}
+          src={resolvedLogoUrl}
           alt={name}
           width={size - pad * 2}
           height={size - pad * 2}
-          onError={() => setFailed(true)}
+          onError={() => setFailedSrc(resolvedLogoUrl)}
           style={{ width: size - pad * 2, height: size - pad * 2, objectFit: "contain" }}
         />
       </div>

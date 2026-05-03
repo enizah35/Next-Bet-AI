@@ -1,7 +1,7 @@
 {
-  "best_val_loss": 0.9806,
-  "best_val_acc": 0.5271,
-  "epochs_trained": 58,
+  "best_val_loss": 0.9819,
+  "best_val_acc": 0.5293,
+  "epochs_trained": 39,
   "model_config": {
     "input_dim": 54,
     "hidden_dim": 128,
@@ -9,29 +9,29 @@
     "dropout": 0.3,
     "num_classes": 3
   },
-  "test_accuracy": 0.5423,
+  "test_accuracy": 0.5506,
   "per_class_accuracy": {
-    "H": 0.679,
-    "D": 0.172,
-    "A": 0.448
+    "H": 0.653,
+    "D": 0.195,
+    "A": 0.463
   },
   "test_samples": 603,
-  "ensemble_size": 3,
-  "temperature": 1.0,
+  "ensemble_size": 1,
+  "temperature": 1.2,
   "best_approach": "xgboost",
   "all_results": {
-    "nn_ensemble": 0.5406,
-    "xgboost": 0.5423,
-    "lightgbm": 0.5423,
+    "nn_ensemble": 0.5323,
+    "xgboost": 0.5506,
+    "lightgbm": 0.5406,
     "stacking": 0.4643
   },
-  "market_baseline_test_accuracy": 0.5423,
+  "market_baseline_test_accuracy": 0.5406,
   "market_baseline_full_accuracy": 0.5452,
-  "best_vs_market_delta": 0.0,
+  "best_vs_market_delta": 0.01,
   "draw_specialist": {
-    "selected": 353,
-    "precision": 0.3059,
-    "recall": 0.6626
+    "selected": 315,
+    "precision": 0.3048,
+    "recall": 0.5854
   },
   "rows_with_feature_nan": 41,
   "total_feature_nan": 344,
@@ -41,138 +41,138 @@
   "confidence_bands": {
     "nn_ensemble": {
       "0.5": {
-        "selected": 292,
-        "coverage": 0.4842,
-        "accuracy": 0.661
+        "selected": 291,
+        "coverage": 0.4826,
+        "accuracy": 0.6495
       },
       "0.55": {
-        "selected": 230,
-        "coverage": 0.3814,
-        "accuracy": 0.6652
+        "selected": 228,
+        "coverage": 0.3781,
+        "accuracy": 0.6667
       },
       "0.6": {
-        "selected": 186,
-        "coverage": 0.3085,
-        "accuracy": 0.6882
+        "selected": 170,
+        "coverage": 0.2819,
+        "accuracy": 0.7
       },
       "0.65": {
-        "selected": 138,
-        "coverage": 0.2289,
-        "accuracy": 0.7174
+        "selected": 128,
+        "coverage": 0.2123,
+        "accuracy": 0.7031
       },
       "0.7": {
-        "selected": 91,
-        "coverage": 0.1509,
-        "accuracy": 0.7473
+        "selected": 78,
+        "coverage": 0.1294,
+        "accuracy": 0.7051
       }
     },
     "xgboost": {
       "0.5": {
-        "selected": 334,
-        "coverage": 0.5539,
-        "accuracy": 0.6347
+        "selected": 336,
+        "coverage": 0.5572,
+        "accuracy": 0.622
       },
       "0.55": {
-        "selected": 265,
-        "coverage": 0.4395,
-        "accuracy": 0.6566
+        "selected": 267,
+        "coverage": 0.4428,
+        "accuracy": 0.6479
       },
       "0.6": {
-        "selected": 189,
-        "coverage": 0.3134,
-        "accuracy": 0.6825
+        "selected": 196,
+        "coverage": 0.325,
+        "accuracy": 0.6531
       },
       "0.65": {
-        "selected": 125,
-        "coverage": 0.2073,
-        "accuracy": 0.704
+        "selected": 120,
+        "coverage": 0.199,
+        "accuracy": 0.7
       },
       "0.7": {
-        "selected": 58,
-        "coverage": 0.0962,
-        "accuracy": 0.7586
+        "selected": 64,
+        "coverage": 0.1061,
+        "accuracy": 0.7656
       }
     },
     "lightgbm": {
       "0.5": {
-        "selected": 341,
-        "coverage": 0.5655,
-        "accuracy": 0.6276
+        "selected": 340,
+        "coverage": 0.5638,
+        "accuracy": 0.6265
       },
       "0.55": {
-        "selected": 263,
-        "coverage": 0.4362,
-        "accuracy": 0.6616
+        "selected": 262,
+        "coverage": 0.4345,
+        "accuracy": 0.6603
       },
       "0.6": {
-        "selected": 178,
-        "coverage": 0.2952,
-        "accuracy": 0.6798
+        "selected": 177,
+        "coverage": 0.2935,
+        "accuracy": 0.678
       },
       "0.65": {
-        "selected": 103,
-        "coverage": 0.1708,
-        "accuracy": 0.7476
+        "selected": 102,
+        "coverage": 0.1692,
+        "accuracy": 0.7451
       },
       "0.7": {
-        "selected": 53,
-        "coverage": 0.0879,
-        "accuracy": 0.7736
+        "selected": 52,
+        "coverage": 0.0862,
+        "accuracy": 0.7692
       }
     },
     "stacking": {
       "0.5": {
-        "selected": 462,
-        "coverage": 0.7662,
-        "accuracy": 0.5022
+        "selected": 460,
+        "coverage": 0.7629,
+        "accuracy": 0.4891
       },
       "0.55": {
-        "selected": 388,
-        "coverage": 0.6434,
-        "accuracy": 0.5387
+        "selected": 396,
+        "coverage": 0.6567,
+        "accuracy": 0.4798
       },
       "0.6": {
-        "selected": 327,
-        "coverage": 0.5423,
-        "accuracy": 0.5627
+        "selected": 328,
+        "coverage": 0.5439,
+        "accuracy": 0.5
       },
       "0.65": {
-        "selected": 276,
-        "coverage": 0.4577,
-        "accuracy": 0.5652
+        "selected": 283,
+        "coverage": 0.4693,
+        "accuracy": 0.5159
       },
       "0.7": {
-        "selected": 215,
-        "coverage": 0.3566,
-        "accuracy": 0.6047
+        "selected": 226,
+        "coverage": 0.3748,
+        "accuracy": 0.5487
       }
     }
   },
   "best_confidence_bands": {
     "0.5": {
-      "selected": 334,
-      "coverage": 0.5539,
-      "accuracy": 0.6347
+      "selected": 336,
+      "coverage": 0.5572,
+      "accuracy": 0.622
     },
     "0.55": {
-      "selected": 265,
-      "coverage": 0.4395,
-      "accuracy": 0.6566
+      "selected": 267,
+      "coverage": 0.4428,
+      "accuracy": 0.6479
     },
     "0.6": {
-      "selected": 189,
-      "coverage": 0.3134,
-      "accuracy": 0.6825
+      "selected": 196,
+      "coverage": 0.325,
+      "accuracy": 0.6531
     },
     "0.65": {
-      "selected": 125,
-      "coverage": 0.2073,
-      "accuracy": 0.704
+      "selected": 120,
+      "coverage": 0.199,
+      "accuracy": 0.7
     },
     "0.7": {
-      "selected": 58,
-      "coverage": 0.0962,
-      "accuracy": 0.7586
+      "selected": 64,
+      "coverage": 0.1061,
+      "accuracy": 0.7656
     }
   },
   "num_features": 54

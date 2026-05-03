@@ -7,14 +7,17 @@ Intègre le modèle PyTorch MatchPredictor avec 15 features avancées.
 
 import logging
 import os
+import secrets
 import stripe
 import time
 import concurrent.futures
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional, Dict
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi import Depends, FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text, select, desc
@@ -27,16 +30,144 @@ from src.database.models import Profile
 logger: logging.Logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 
-UPCOMING_CACHE_TTL_SECONDS = int(os.getenv("UPCOMING_CACHE_TTL_SECONDS", "90"))
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        logger.warning("%s invalide, fallback=%s", name, default)
+        return default
+    return max(minimum, min(value, maximum))
+
+
+def _split_env_csv(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _normalize_origin(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    candidate = value.strip().rstrip("/")
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return candidate
+
+
+APP_ENV = os.getenv("APP_ENV", os.getenv("ENV", "development")).strip().lower()
+IS_PRODUCTION = APP_ENV in {"prod", "production"}
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "").strip()
+
+UPCOMING_CACHE_TTL_SECONDS = _env_int("UPCOMING_CACHE_TTL_SECONDS", 90, 5, 3600)
+UPCOMING_STALE_TTL_SECONDS = _env_int("UPCOMING_STALE_TTL_SECONDS", 1800, 30, 86400)
+UPCOMING_MAX_LIMIT = _env_int("UPCOMING_MAX_LIMIT", 300, 1, 500)
+UPCOMING_PREWARM_LIMIT = _env_int("UPCOMING_PREWARM_LIMIT", 300, 1, UPCOMING_MAX_LIMIT)
 UPCOMING_DEFAULT_LEAGUES = [
     item.strip()
     for item in os.getenv(
         "UPCOMING_DEFAULT_LEAGUES",
-        "Premier League,Championship,Ligue 1,Ligue 2,Bundesliga,2. Bundesliga,La Liga,La Liga 2,Serie A,Serie B,Eredivisie,Primeira Liga,SÃ¼per Lig,Belgian Pro League,Scottish Premiership",
+        "Champions League,Premier League,Championship,Ligue 1,Ligue 2,Bundesliga,2. Bundesliga,La Liga,La Liga 2,Serie A,Serie B,Eredivisie,Primeira Liga,Süper Lig,Belgian Pro League,Scottish Premiership",
     ).split(",")
     if item.strip()
 ]
 _upcoming_cache: dict[str, tuple[float, list[dict]]] = {}
+_upcoming_refresh_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="upcoming-live")
+_upcoming_inflight: set[str] = set()
+_upcoming_inflight_lock = threading.Lock()
+
+
+def _build_allowed_origins() -> tuple[bool, list[str]]:
+    configured = _split_env_csv(os.getenv("CORS_ALLOWED_ORIGINS") or os.getenv("ALLOWED_ORIGINS"))
+    allow_all = "*" in configured and not IS_PRODUCTION
+    if "*" in configured and IS_PRODUCTION:
+        logger.warning("CORS '*' ignore en production. Configure CORS_ALLOWED_ORIGINS.")
+
+    origins = [
+        normalized
+        for normalized in (_normalize_origin(origin) for origin in configured if origin != "*")
+        if normalized
+    ]
+    site_origin = _normalize_origin(os.getenv("NEXT_PUBLIC_SITE_URL"))
+    if site_origin:
+        origins.append(site_origin)
+
+    if not origins and not IS_PRODUCTION:
+        origins.extend([
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+        ])
+
+    return allow_all, sorted(set(origins))
+
+
+CORS_ALLOW_ALL, CORS_ALLOWED_ORIGINS = _build_allowed_origins()
+
+
+def _upcoming_cache_key(league: str, fast: bool, limit: int) -> str:
+    return f"{league}:{fast}:{limit}"
+
+
+def _is_cache_fresh(key: str, ttl: int = UPCOMING_CACHE_TTL_SECONDS) -> bool:
+    cached = _upcoming_cache.get(key)
+    return bool(cached and time.time() - cached[0] < ttl)
+
+
+def _schedule_upcoming_live_refresh(league: str, limit: int) -> bool:
+    """Refresh live complet en arrière-plan, sans bloquer le rendu mobile."""
+    key = _upcoming_cache_key(league, False, limit)
+    if _is_cache_fresh(key):
+        return False
+
+    with _upcoming_inflight_lock:
+        if key in _upcoming_inflight:
+            return False
+        _upcoming_inflight.add(key)
+
+    def _refresh() -> None:
+        try:
+            logger.info("Refresh live complet planifié — %s", key)
+            get_upcoming_predictions(league=league, fast=False, refresh=True, limit=limit, background=False)
+        except Exception as exc:
+            logger.warning("Refresh live complet échoué (%s): %s", key, exc)
+        finally:
+            with _upcoming_inflight_lock:
+                _upcoming_inflight.discard(key)
+
+    _upcoming_refresh_executor.submit(_refresh)
+    return True
+
+
+def _safe_upcoming_limit(limit: int) -> int:
+    return max(1, min(limit, UPCOMING_MAX_LIMIT))
+
+
+def _get_site_url() -> str:
+    site_url = _normalize_origin(os.getenv("NEXT_PUBLIC_SITE_URL"))
+    if site_url:
+        return site_url
+    if IS_PRODUCTION:
+        raise HTTPException(status_code=500, detail="Configuration site manquante")
+    return "http://localhost:3000"
+
+
+def require_admin_api_key(
+    x_admin_api_key: Optional[str] = Header(default=None, alias="x-admin-api-key"),
+) -> None:
+    expected = ADMIN_API_KEY or os.getenv("ADMIN_API_KEY", "").strip()
+    if not expected:
+        raise HTTPException(status_code=404, detail="Route admin desactivee")
+    if not x_admin_api_key or not secrets.compare_digest(x_admin_api_key, expected):
+        raise HTTPException(status_code=401, detail="Authentification admin requise")
 
 # ============================================================
 # Lifespan : chargement du modèle au démarrage
@@ -66,6 +197,13 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Impossible de vérifier les tables DB : {e}")
 
     logger.info("--- API Prête à recevoir des requêtes ---")
+    if os.getenv("UPCOMING_PREWARM_ON_STARTUP", "true").lower() == "true":
+        try:
+            scheduled = _schedule_upcoming_live_refresh("all", _safe_upcoming_limit(UPCOMING_PREWARM_LIMIT))
+            logger.info("Prechauffage cache live complet au demarrage (scheduled=%s)", scheduled)
+        except Exception as e:
+            logger.warning("Prechauffage cache live complet ignore: %s", e)
+
     yield
     # Shutdown
     logger.info("Fermeture de l'application...")
@@ -78,15 +216,30 @@ app: FastAPI = FastAPI(
     description="API de prédiction de matchs de football par Deep Learning (Ligue 1 & Premier League)",
     version="2.1.0",
     lifespan=lifespan,
+    docs_url=None if IS_PRODUCTION and not _env_bool("ENABLE_API_DOCS", False) else "/docs",
+    redoc_url=None if IS_PRODUCTION and not _env_bool("ENABLE_API_DOCS", False) else "/redoc",
+    openapi_url=None if IS_PRODUCTION and not _env_bool("ENABLE_API_DOCS", False) else "/openapi.json",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"] if CORS_ALLOW_ALL else CORS_ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["authorization", "content-type", "stripe-signature", "x-admin-api-key"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if IS_PRODUCTION or request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 # ============================================================
 # Configuration Stripe
@@ -185,9 +338,9 @@ class PredictResponse(BaseModel):
 
 
 class CheckoutRequest(BaseModel):
-    user_id: str
-    tier: str
-    cycle: str # "monthly" | "yearly"
+    user_id: str = Field(..., min_length=1, max_length=128)
+    tier: str = Field(..., pattern="^(ligue1|pl|ultimate)$")
+    cycle: str = Field(..., pattern="^(monthly|yearly)$")
 
 class CheckoutResponse(BaseModel):
     url: str
@@ -210,11 +363,14 @@ class HealthResponse(BaseModel):
 async def create_checkout_session(request: CheckoutRequest):
     """Crée une session de paiement Stripe pour un utilisateur."""
     try:
+        if not stripe.api_key:
+            raise HTTPException(status_code=503, detail="Paiement indisponible")
+
         price_id = PRICE_MAP.get(request.tier, {}).get(request.cycle)
         if not price_id:
             raise HTTPException(status_code=400, detail="Offre ou cycle invalide")
 
-        site_url = os.getenv("NEXT_PUBLIC_SITE_URL", "http://localhost:3000")
+        site_url = _get_site_url()
         
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=["card"],
@@ -229,14 +385,24 @@ async def create_checkout_session(request: CheckoutRequest):
             }
         )
 
+        if not checkout_session.url:
+            raise HTTPException(status_code=502, detail="Session de paiement invalide")
+
         return CheckoutResponse(url=checkout_session.url)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Stripe Session Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Erreur creation session Stripe")
 
 @app.post("/api/stripe/webhook", tags=["Stripe"])
-async def stripe_webhook(request: Request, stripe_signature: str = Header(None)):
+async def stripe_webhook(request: Request, stripe_signature: Optional[str] = Header(None)):
     """Webhook pour gérer les événements Stripe (paiements, annulations)."""
+    if not stripe_webhook_secret:
+        raise HTTPException(status_code=503, detail="Webhook Stripe non configure")
+    if not stripe_signature:
+        raise HTTPException(status_code=400, detail="Signature manquante")
+
     payload = await request.body()
     
     try:
@@ -398,6 +564,7 @@ def get_upcoming_predictions(
     fast: bool = True,
     refresh: bool = False,
     limit: int = 40,
+    background: bool = False,
 ) -> list[dict]:
     """
     Retourne les prédictions pour les 7 prochains jours.
@@ -414,13 +581,30 @@ def get_upcoming_predictions(
 
     from src.ingestion.live_data import ESPN_LEAGUE_CODES
 
-    safe_limit = max(1, min(limit, 80))
-    cache_key = f"{league}:{fast}:{safe_limit}"
+    safe_limit = _safe_upcoming_limit(limit)
+    cache_key = _upcoming_cache_key(league, fast, safe_limit)
+    full_cache_key = _upcoming_cache_key(league, False, safe_limit)
+    fast_cache_key = _upcoming_cache_key(league, True, safe_limit)
     now = time.time()
     cached = _upcoming_cache.get(cache_key)
     if cached and not refresh and now - cached[0] < UPCOMING_CACHE_TTL_SECONDS:
         logger.info(f"GET /predictions/upcoming — cache hit {cache_key}")
         return cached[1]
+
+    if background:
+        scheduled = _schedule_upcoming_live_refresh(league, safe_limit)
+        full_cached = _upcoming_cache.get(full_cache_key)
+        if full_cached and now - full_cached[0] < UPCOMING_STALE_TTL_SECONDS:
+            logger.info(f"GET /predictions/upcoming - live cache {full_cache_key} (scheduled={scheduled})")
+            return full_cached[1]
+
+        fast_cached = _upcoming_cache.get(fast_cache_key)
+        if fast_cached and now - fast_cached[0] < UPCOMING_STALE_TTL_SECONDS:
+            logger.info(f"GET /predictions/upcoming - fallback cache {fast_cache_key} (scheduled={scheduled})")
+            return fast_cached[1]
+
+        logger.info("GET /predictions/upcoming - refresh live en arriere-plan demarre sans cache pret")
+        return []
 
     logger.info(f"GET /predictions/upcoming — league={league} fast={fast} limit={safe_limit}")
 
@@ -451,21 +635,64 @@ def get_upcoming_predictions(
     if not live_matches:
         _upcoming_cache[cache_key] = (time.time(), [])
         return []
-    live_matches = live_matches[:safe_limit]
+
+    # Filtre temporel : on retire les matchs ayant débuté il y a plus de 90 minutes
+    from datetime import timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=90)
+
+    def _match_kickoff(m: dict) -> Optional[datetime]:
+        raw = m.get("date")
+        if not raw:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    live_matches = [m for m in live_matches if (ko := _match_kickoff(m)) is None or ko >= cutoff]
+    if not live_matches:
+        _upcoming_cache[cache_key] = (time.time(), [])
+        return []
+
+    # Round-robin par ligue avant d'appliquer le cap, pour qu'aucune ligue ne soit affamée
+    by_league: dict[str, list[dict]] = {}
+    for m in live_matches:
+        by_league.setdefault(m.get("competition", "?"), []).append(m)
+    for lst in by_league.values():
+        lst.sort(key=lambda x: _match_kickoff(x) or datetime.max.replace(tzinfo=timezone.utc))
+
+    balanced: list[dict] = []
+    league_order = list(by_league.keys())
+    while len(balanced) < safe_limit and any(by_league[lg] for lg in league_order):
+        for lg in league_order:
+            if not by_league[lg]:
+                continue
+            balanced.append(by_league[lg].pop(0))
+            if len(balanced) >= safe_limit:
+                break
+    live_matches = balanced
 
     # 1b. Cotes multi-marchés (par ligue)
     bookmaker_cache: dict = {}
     if not fast:
-        for lg in leagues_to_fetch:
-            try:
-                bookmaker_cache.update(fetch_bookmaker_odds(lg))
-            except Exception as e:
-                logger.warning(f"Bookmaker odds fetch failed ({lg}): {e}")
+        odds_workers = max(1, min(6, len(leagues_to_fetch)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=odds_workers) as executor:
+            future_to_league = {executor.submit(fetch_bookmaker_odds, lg): lg for lg in leagues_to_fetch}
+            for future in concurrent.futures.as_completed(future_to_league):
+                lg = future_to_league[future]
+                try:
+                    bookmaker_cache.update(future.result())
+                except Exception as e:
+                    logger.warning(f"Bookmaker odds fetch failed ({lg}): {e}")
 
     # 2. Mapping avec la DB pour obtenir les features (Elo, Domicile/Exterieur Forme)
     should_log_predictions = os.getenv("PREDICTION_LOG_ON_READ", "").lower() == "true"
     live_features_in_fast = os.getenv("LIVE_FEATURES_IN_FAST", "true").lower() == "true"
     live_injuries_in_fast = os.getenv("LIVE_INJURIES_IN_FAST", "false").lower() == "true"
+    live_squads_in_fast = os.getenv("LIVE_SQUADS_IN_FAST", "false").lower() == "true"
     session = get_session() if (not fast or should_log_predictions or live_features_in_fast) else None
     results = []
 
@@ -539,7 +766,7 @@ def get_upcoming_predictions(
                 "home_form": [],
                 "away_form": [],
             }
-            live_match_stats_in_fast = os.getenv("LIVE_MATCH_STATS_IN_FAST", "true").lower() == "true"
+            live_match_stats_in_fast = os.getenv("LIVE_MATCH_STATS_IN_FAST", "false").lower() == "true"
             if session and (not fast or live_match_stats_in_fast):
                 try:
                     match_stats = predict_match_stats(home_name, away_name, session=session, league=competition)
@@ -547,18 +774,71 @@ def get_upcoming_predictions(
                     if session:
                         session.rollback()
 
+            fixture_id = m.get("fixtureId")
+            home_api_id = m.get("apiHomeTeamId")
+            away_api_id = m.get("apiAwayTeamId")
             home_inj, away_inj = 0, 0
             home_squad, away_squad = {}, {}
+            squad_adj = {"home": 0.0, "draw": 0.0, "away": 0.0}
+            injury_details = {
+                "source": "none",
+                "home": {"count": 0, "players": []},
+                "away": {"count": 0, "players": []},
+            }
             if not fast or live_injuries_in_fast:
                 try:
-                    from src.ingestion.api_football import get_injuries_for_match
-                    current_year = datetime.now().year
-                    home_inj, away_inj = get_injuries_for_match(home_name, away_name, competition, current_year)
+                    from src.ingestion.api_football import get_current_api_season, get_injuries_for_match
+                    current_season = get_current_api_season()
+                    home_inj, away_inj, injury_details = get_injuries_for_match(
+                        home_name,
+                        away_name,
+                        competition,
+                        current_season,
+                        fixture_id=fixture_id,
+                        home_api_id=home_api_id,
+                        away_api_id=away_api_id,
+                        return_details=True,
+                    )
                     features["home_injured_count"] = float(home_inj)
                     features["away_injured_count"] = float(away_inj)
                     features["injury_diff"] = float(away_inj - home_inj)
                 except Exception as ie:
                     logger.debug(f"Blessures live ignorées: {ie}")
+
+            if not fast or live_squads_in_fast:
+                try:
+                    from src.features.squad_strength import get_match_squad_info, compute_squad_adjustment
+                    from src.ingestion.api_football import get_current_api_season
+
+                    current_season = get_current_api_season()
+                    lineups_lookahead_hours = int(os.getenv("LIVE_LINEUPS_LOOKAHEAD_HOURS", "4"))
+                    fetch_lineups = not fast
+                    kickoff_value = (m.get("apiFootballFixture") or {}).get("kickoff") or m.get("date")
+                    try:
+                        kickoff_dt = datetime.fromisoformat(str(kickoff_value).replace("Z", "+00:00"))
+                        ref_now = datetime.now(kickoff_dt.tzinfo) if kickoff_dt.tzinfo else datetime.now()
+                        fetch_lineups = (
+                            kickoff_dt >= ref_now - timedelta(hours=2)
+                            and kickoff_dt <= ref_now + timedelta(hours=lineups_lookahead_hours)
+                        )
+                    except Exception:
+                        fetch_lineups = not fast
+
+                    home_squad, away_squad = get_match_squad_info(
+                        home_name,
+                        away_name,
+                        league=competition,
+                        season=current_season,
+                        fixture_id=fixture_id,
+                        home_api_id=home_api_id,
+                        away_api_id=away_api_id,
+                        fixture_injuries=injury_details,
+                        fetch_lineups=fetch_lineups,
+                    )
+                    squad_adj = compute_squad_adjustment(home_squad, away_squad)
+                except Exception as se:
+                    logger.debug(f"Squad ajustement ignoré: {se}")
+                    home_squad, away_squad = {}, {}
 
             # 3. Inférence Modèle
             if predictor_service.is_loaded:
@@ -589,21 +869,13 @@ def get_upcoming_predictions(
 
                     # --- Ajustement effectif / composition ---
                     try:
-                        if fast:
-                            raise RuntimeError("fast mode")
-                        from src.features.squad_strength import get_match_squad_info, compute_squad_adjustment
-                        current_year = datetime.now().year
-                        home_squad, away_squad = get_match_squad_info(
-                            home_name, away_name, league=competition,
-                            season=current_year,
-                        )
-                        squad_adj = compute_squad_adjustment(home_squad, away_squad)
+                        if not home_squad or not away_squad:
+                            raise RuntimeError("no squad data")
                         p1 += squad_adj["home"]
                         pn += squad_adj["draw"]
                         p2 += squad_adj["away"]
                     except Exception as se:
                         logger.debug(f"Squad ajustement ignoré: {se}")
-                        home_squad, away_squad = {}, {}
 
                     # Renormaliser pour que la somme = 1
                     total = p1 + pn + p2
@@ -617,10 +889,8 @@ def get_upcoming_predictions(
                 except Exception as e:
                     logger.error(f"Inference error: {e}")
                     p1, pn, p2 = 45.0, 25.0, 30.0
-                    home_squad, away_squad = {}, {}
             else:
                 p1, pn, p2 = 45.0, 25.0, 30.0
-                home_squad, away_squad = {}, {}
 
             # Recommandation IA
             if p1 > 55: recommendation = f"Victoire de {home_name} (Confiance Haute)"
@@ -687,22 +957,52 @@ def get_upcoming_predictions(
             # Cotes bookmaker pour ce match
             match_bk_odds = get_match_bookmaker_odds(home_name, away_name, bookmaker_cache)
 
-            # Bet Builder IA (avec cotes réelles Winamax/Betclic)
-            bet_builder = generate_bet_builder(match_stats, {"p1": p1, "pn": pn, "p2": p2}, bookmaker_odds=match_bk_odds)
+            # Bet Builder IA (avec cotes réelles Winamax/Betclic + effectifs)
+            bet_builder = generate_bet_builder(
+                match_stats,
+                {"p1": p1, "pn": pn, "p2": p2},
+                bookmaker_odds=match_bk_odds,
+                home_team=home_name,
+                away_team=away_name,
+                availability={
+                    "home": {
+                        **(home_squad or {}),
+                        "injuries_count": home_inj or m["injuriesCountHome"],
+                    },
+                    "away": {
+                        **(away_squad or {}),
+                        "injuries_count": away_inj or m["injuriesCountAway"],
+                    },
+                    "source": injury_details.get("source"),
+                },
+            )
 
             odds_home = match_odds["avg_h"] if match_odds else None
             odds_draw = match_odds["avg_d"] if match_odds else None
             odds_away = match_odds["avg_a"] if match_odds else None
+            home_injury_names = [
+                f"{home_name}: {player.get('name')}"
+                for player in (injury_details.get("home", {}) or {}).get("players", [])
+                if player.get("name")
+            ]
+            away_injury_names = [
+                f"{away_name}: {player.get('name')}"
+                for player in (injury_details.get("away", {}) or {}).get("players", [])
+                if player.get("name")
+            ]
+            injury_alerts = (m.get("injuriesHome") or []) + (m.get("injuriesAway") or []) + home_injury_names + away_injury_names
 
             results.append({
                 "id": idx + 1,
                 "homeTeam": home_name,
                 "awayTeam": away_name,
+                "homeLogo": m.get("homeLogo"),
+                "awayLogo": m.get("awayLogo"),
                 "date": m["date"],
                 "dateFormatted": date_fmt,
                 "competition": competition,
                 "league": competition,
-                "injuries": m["injuriesHome"] + m["injuriesAway"],
+                "injuries": injury_alerts,
                 "valueBet": value_bet,
                 "recommendation": recommendation,
                 "probs": {"p1": p1, "pn": pn, "p2": p2},
@@ -730,15 +1030,39 @@ def get_upcoming_predictions(
                     "formHome": round(min(extra["home_pts_last_5"] / 3.0, 1.0), 2),
                     "formAway": round(min(features["away_pts_last_5"] / 3.0, 1.0), 2),
                     "weatherCode": m["weatherCode"],
+                    "fixtureId": fixture_id,
+                    "homeEspnId": m.get("homeEspnId"),
+                    "awayEspnId": m.get("awayEspnId"),
+                    "lineupsAvailable": bool(home_squad.get("lineup_confirmed") or away_squad.get("lineup_confirmed")),
+                    "injuriesSource": injury_details.get("source"),
                     "injuriesCountHome": home_inj or m["injuriesCountHome"],
                     "injuriesCountAway": away_inj or m["injuriesCountAway"],
+                    "homeMissingPlayers": (home_squad.get("missing_players") or [])[:5],
+                    "awayMissingPlayers": (away_squad.get("missing_players") or [])[:5],
                     "homeElo": round(features["home_elo"]),
                     "awayElo": round(features["away_elo"]),
                     "eloDiff": round(features["elo_diff"]),
                     "homeDaysRest": round(extra["home_days_rest"]),
                     "awayDaysRest": round(extra["away_days_rest"]),
                 },
+                "availability": {
+                    "fixtureId": fixture_id,
+                    "fixture": m.get("apiFootballFixture") or {},
+                    "injuries": injury_details,
+                    "homeSquad": home_squad,
+                    "awaySquad": away_squad,
+                    "squadAdjustment": squad_adj,
+                },
                 "h2h": h2h,
+                "liveStatus": {
+                    "mode": "fast" if fast else "full",
+                    "generatedAt": datetime.utcnow().isoformat(),
+                    "oddsLoaded": bool(match_odds),
+                    "bookmakerMarketsLoaded": bool(match_bk_odds),
+                    "statsLoaded": bool(session and (not fast or live_match_stats_in_fast)),
+                    "injuriesLoaded": injury_details.get("source") not in (None, "none"),
+                    "lineupsLoaded": bool(home_squad.get("lineup_confirmed") or away_squad.get("lineup_confirmed")),
+                },
             })
 
         # Les logs DB sur une lecture frontend coûtent cher. On les active seulement explicitement.
@@ -802,6 +1126,72 @@ def get_upcoming_predictions(
     finally:
         if session:
             session.close()
+
+
+@app.get("/predictions/upcoming/full-cached", tags=["Frontend"])
+def get_upcoming_predictions_full_cached(
+    league: str = "all",
+    limit: int = 40,
+    refresh: bool = False,
+    wait: bool = False,
+) -> list[dict]:
+    """
+    Return a full live payload from cache, with fallback to the fast cache
+    while the heavy refresh is still warming up.
+    """
+    safe_limit = _safe_upcoming_limit(limit)
+    cache_key = _upcoming_cache_key(league, False, safe_limit)
+    fast_cache_key = _upcoming_cache_key(league, True, safe_limit)
+    now = time.time()
+    cached = _upcoming_cache.get(cache_key)
+
+    if cached and not refresh and now - cached[0] < UPCOMING_CACHE_TTL_SECONDS:
+        logger.info("GET /predictions/upcoming/full-cached - fresh cache %s", cache_key)
+        return cached[1]
+
+    scheduled = _schedule_upcoming_live_refresh(league, safe_limit)
+    if cached and now - cached[0] < UPCOMING_STALE_TTL_SECONDS:
+        logger.info(
+            "GET /predictions/upcoming/full-cached - stale cache %s (scheduled=%s)",
+            cache_key,
+            scheduled,
+        )
+        return cached[1]
+
+    if wait and _env_bool("ALLOW_PUBLIC_BLOCKING_REFRESH", False):
+        logger.info("GET /predictions/upcoming/full-cached - cold blocking refresh %s", cache_key)
+        return get_upcoming_predictions(
+            league=league,
+            fast=False,
+            refresh=True,
+            limit=safe_limit,
+            background=False,
+        )
+
+    # Fallback : si le cache full n'est pas prêt, on tente le cache fast (frais ou stale).
+    fast_cached = _upcoming_cache.get(fast_cache_key)
+    if fast_cached and now - fast_cached[0] < UPCOMING_STALE_TTL_SECONDS:
+        logger.info(
+            "GET /predictions/upcoming/full-cached - fast cache fallback %s (scheduled=%s)",
+            fast_cache_key,
+            scheduled,
+        )
+        return fast_cached[1]
+
+    # Aucun cache disponible : on calcule le payload fast en bloquant (rapide,
+    # quelques secondes) plutôt que de renvoyer une liste vide.
+    logger.info(
+        "GET /predictions/upcoming/full-cached - cold fast fetch %s (scheduled=%s)",
+        fast_cache_key,
+        scheduled,
+    )
+    return get_upcoming_predictions(
+        league=league,
+        fast=True,
+        refresh=False,
+        limit=safe_limit,
+        background=False,
+    )
 
 
 # ============================================================
@@ -904,276 +1294,7 @@ def get_daily_tips(league: str = "all") -> dict:
 
     except Exception as e:
         logger.error(f"Erreur GET /predictions/tips : {e}", exc_info=True)
-        return {"tips": [], "count": 0, "error": str(e)}
-    finally:
-        session.close()
-
-
-# ============================================================
-# Route Résultats / Historique
-# ============================================================
-@app.get("/predictions/results", tags=["Frontend"])
-def get_prediction_results() -> dict:
-    """
-    Retourne l'historique des prédictions et les statistiques de performance.
-    """
-    from src.database.database import get_session
-    from src.database.models import PredictionLog
-    from sqlalchemy import select, func, desc
-
-    logger.info("GET /predictions/results")
-    session = get_session()
-
-    try:
-        # Stats globales
-        total = session.execute(select(func.count(PredictionLog.id)).where(PredictionLog.is_won.isnot(None))).scalar() or 0
-        won = session.execute(select(func.count(PredictionLog.id)).where(PredictionLog.is_won == True)).scalar() or 0
-        lost = session.execute(select(func.count(PredictionLog.id)).where(PredictionLog.is_won == False)).scalar() or 0
-        pending = session.execute(select(func.count(PredictionLog.id)).where(PredictionLog.is_won.is_(None))).scalar() or 0
-        win_rate = round((won / total * 100), 1) if total > 0 else 0
-
-        # Dernières prédictions
-        stmt = select(PredictionLog).order_by(desc(PredictionLog.created_at)).limit(100)
-        rows = session.execute(stmt).scalars().all()
-
-        history = []
-        # Grouper les bet builder par match (clé = date+home+away)
-        bb_groups: dict[str, list] = {}
-        BB_KEYS = {"match_result_home", "match_result_away", "double_chance_home",
-                    "double_chance_away", "over_25", "over_15", "btts"}
-
-        for r in rows:
-            entry = {
-                "id": r.id,
-                "homeTeam": r.home_team,
-                "awayTeam": r.away_team,
-                "league": r.league,
-                "matchDate": r.match_date.isoformat() if r.match_date else None,
-                "prediction": r.prediction,
-                "tipType": r.tip_type,
-                "confidence": r.confidence,
-                "odds": r.odds,
-                "actualResult": r.actual_result,
-                "actualScore": f"{r.actual_home_goals}-{r.actual_away_goals}" if r.actual_home_goals is not None else None,
-                "isWon": r.is_won,
-                "createdAt": r.created_at.isoformat() if r.created_at else None,
-                "verifiedAt": r.verified_at.isoformat() if r.verified_at else None,
-            }
-            history.append(entry)
-
-            # Grouper les sélections bet builder
-            if r.tip_type in BB_KEYS:
-                match_key = f"{(r.match_date.strftime('%Y-%m-%d') if r.match_date else '')}__{r.home_team}__{r.away_team}"
-                bb_groups.setdefault(match_key, []).append(entry)
-
-        # Construire les combis bet builder
-        bet_builders = []
-        for key, selections in bb_groups.items():
-            all_verified = all(s["isWon"] is not None for s in selections)
-            all_won = all(s["isWon"] is True for s in selections)
-            any_lost = any(s["isWon"] is False for s in selections)
-            combined_odds = 1.0
-            for s in selections:
-                combined_odds *= (s["odds"] or 1.0)
-            bet_builders.append({
-                "matchKey": key,
-                "homeTeam": selections[0]["homeTeam"],
-                "awayTeam": selections[0]["awayTeam"],
-                "league": selections[0]["league"],
-                "matchDate": selections[0]["matchDate"],
-                "actualScore": selections[0]["actualScore"],
-                "selections": selections,
-                "combinedOdds": round(combined_odds, 2),
-                "isWon": True if (all_verified and all_won) else (False if any_lost else None),
-            })
-
-        return {
-            "stats": {
-                "total": total,
-                "won": won,
-                "lost": lost,
-                "pending": pending,
-                "winRate": win_rate,
-            },
-            "history": history,
-            "betBuilders": bet_builders,
-        }
-
-    except Exception as e:
-        logger.error(f"Erreur GET /predictions/results : {e}", exc_info=True)
-        return {"stats": {"total": 0, "won": 0, "lost": 0, "pending": 0, "winRate": 0}, "history": []}
-    finally:
-        session.close()
-
-
-# ============================================================
-# POST /predictions/verify — Vérifier les résultats réels
-# ============================================================
-@app.post("/predictions/verify", tags=["Frontend"])
-def verify_predictions() -> dict:
-    """
-    Vérifie les prédictions en attente en récupérant les scores réels
-    depuis l'API football-data.org (matches terminés).
-    Met à jour PredictionLog avec actual_result, actual_home_goals,
-    actual_away_goals, is_won, verified_at.
-    """
-    import httpx
-    from src.database.database import get_session
-    from src.database.models import PredictionLog
-    from sqlalchemy import select
-    from datetime import datetime, timedelta
-
-    logger.info("POST /predictions/verify")
-    session = get_session()
-    verified_count = 0
-
-    try:
-        # Récupérer les prédictions en attente (is_won IS NULL)
-        stmt = select(PredictionLog).where(PredictionLog.is_won.is_(None))
-        pending = session.execute(stmt).scalars().all()
-
-        if not pending:
-            return {"verified": 0, "message": "Aucune prédiction en attente."}
-
-        # Déterminer la plage de dates pour l'API
-        dates = [p.match_date for p in pending if p.match_date]
-        if not dates:
-            return {"verified": 0, "message": "Aucune date de match trouvée."}
-
-        min_date = min(dates) - timedelta(days=1)
-        max_date = max(dates) + timedelta(days=1)
-
-        # Fetch finished matches from football-data.org (free tier)
-        api_key = os.environ.get("FOOTBALL_DATA_API_KEY", "")
-        headers = {"X-Auth-Token": api_key} if api_key else {}
-
-        # Ligue 1 = code FL1, Premier League = PL
-        league_codes = {"Ligue 1": "FL1", "Premier League": "PL"}
-        all_finished: list[dict] = []
-
-        for league_name, code in league_codes.items():
-            try:
-                url = f"https://api.football-data.org/v4/competitions/{code}/matches"
-                params = {
-                    "dateFrom": min_date.strftime("%Y-%m-%d"),
-                    "dateTo": max_date.strftime("%Y-%m-%d"),
-                    "status": "FINISHED",
-                }
-                resp = httpx.get(url, headers=headers, params=params, timeout=15.0)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for m in data.get("matches", []):
-                        all_finished.append({
-                            "homeTeam": m["homeTeam"]["name"],
-                            "awayTeam": m["awayTeam"]["name"],
-                            "homeGoals": m["score"]["fullTime"]["home"],
-                            "awayGoals": m["score"]["fullTime"]["away"],
-                            "date": m["utcDate"][:10],
-                            "league": league_name,
-                        })
-                else:
-                    logger.warning(f"football-data.org {code}: HTTP {resp.status_code}")
-            except Exception as ex:
-                logger.warning(f"football-data.org {code}: {ex}")
-
-        if not all_finished:
-            logger.info("Aucun match terminé trouvé via l'API.")
-            return {"verified": 0, "message": "Aucun match terminé trouvé."}
-
-        # Construire un index pour lookup rapide
-        # Clé: (date YYYY-MM-DD, home_team_lower, away_team_lower)
-        from difflib import SequenceMatcher
-
-        def _normalize(name: str) -> str:
-            return name.lower().strip().replace("fc ", "").replace(" fc", "").replace("paris saint-germain", "psg").replace("paris sg", "psg")
-
-        finished_index: list[dict] = []
-        for fm in all_finished:
-            finished_index.append({
-                **fm,
-                "_home": _normalize(fm["homeTeam"]),
-                "_away": _normalize(fm["awayTeam"]),
-            })
-
-        def _find_match(pred: PredictionLog) -> dict | None:
-            pred_date = pred.match_date.strftime("%Y-%m-%d") if pred.match_date else ""
-            pred_home = _normalize(pred.home_team)
-            pred_away = _normalize(pred.away_team)
-
-            for fm in finished_index:
-                # Date doit être proche (±1 jour)
-                if abs((datetime.strptime(fm["date"], "%Y-%m-%d") - datetime.strptime(pred_date, "%Y-%m-%d")).days) > 1:
-                    continue
-                # Fuzzy match sur les noms d'équipe
-                home_ratio = SequenceMatcher(None, pred_home, fm["_home"]).ratio()
-                away_ratio = SequenceMatcher(None, pred_away, fm["_away"]).ratio()
-                if home_ratio > 0.6 and away_ratio > 0.6:
-                    return fm
-            return None
-
-        # Vérifier chaque prédiction en attente
-        for pred in pending:
-            fm = _find_match(pred)
-            if not fm:
-                continue
-
-            hg = fm["homeGoals"]
-            ag = fm["awayGoals"]
-            actual_result = "H" if hg > ag else ("A" if ag > hg else "D")
-
-            pred.actual_home_goals = hg
-            pred.actual_away_goals = ag
-            pred.actual_result = actual_result
-            pred.verified_at = datetime.now()
-
-            # Déterminer si la prédiction est gagnée
-            tip = pred.tip_type.lower() if pred.tip_type else ""
-            prediction_val = (pred.prediction or "").lower().strip()
-
-            # Bet builder keys
-            if tip == "match_result_home":
-                pred.is_won = actual_result == "H"
-            elif tip == "match_result_away":
-                pred.is_won = actual_result == "A"
-            elif tip == "double_chance_home":
-                pred.is_won = actual_result in ("H", "D")
-            elif tip == "double_chance_away":
-                pred.is_won = actual_result in ("A", "D")
-            elif tip == "over_25":
-                pred.is_won = (hg + ag) > 2.5
-            elif tip == "over_15":
-                pred.is_won = (hg + ag) > 1.5
-            elif tip == "btts":
-                pred.is_won = (hg > 0 and ag > 0)
-            # Legacy tip types
-            elif "double" in tip or "dbl" in tip:
-                if "1" in prediction_val or "home" in prediction_val:
-                    pred.is_won = actual_result in ("H", "D")
-                elif "2" in prediction_val or "away" in prediction_val:
-                    pred.is_won = actual_result in ("A", "D")
-                else:
-                    pred.is_won = False
-            elif "btts" in tip:
-                pred.is_won = (hg > 0 and ag > 0)
-            elif "over" in tip and "2.5" in tip:
-                pred.is_won = (hg + ag) > 2.5
-            elif "over" in tip and "1.5" in tip:
-                pred.is_won = (hg + ag) > 1.5
-            elif "result" in tip or tip == "":
-                pred.is_won = (prediction_val == actual_result.lower())
-            else:
-                pred.is_won = (prediction_val == actual_result.lower())
-
-            verified_count += 1
-
-        session.commit()
-        logger.info(f"Vérification terminée: {verified_count} prédictions mises à jour")
-        return {"verified": verified_count, "message": f"{verified_count} prédiction(s) vérifiée(s)."}
-
-    except Exception as e:
-        session.rollback()
-        logger.error(f"Erreur POST /predictions/verify : {e}", exc_info=True)
-        return {"verified": 0, "error": str(e)}
+        return {"tips": [], "count": 0, "error": "Erreur interne"}
     finally:
         session.close()
 
@@ -1182,14 +1303,18 @@ def verify_predictions() -> dict:
 # Routes Admin
 # ============================================================
 class PredictionUpdateRequest(BaseModel):
-    actual_result: Optional[str] = Field(None, description="H, D ou A")
-    actual_home_goals: Optional[int] = Field(None)
-    actual_away_goals: Optional[int] = Field(None)
+    actual_result: Optional[str] = Field(None, pattern="^(H|D|A)$", description="H, D ou A")
+    actual_home_goals: Optional[int] = Field(None, ge=0, le=30)
+    actual_away_goals: Optional[int] = Field(None, ge=0, le=30)
     is_won: Optional[bool] = Field(None)
 
 
 @app.get("/admin/predictions", tags=["Admin"])
-def admin_get_predictions(limit: int = 200, offset: int = 0) -> dict:
+def admin_get_predictions(
+    limit: int = 200,
+    offset: int = 0,
+    _: None = Depends(require_admin_api_key),
+) -> dict:
     """Retourne toutes les prédictions pour la page admin."""
     from src.database.database import get_session
     from src.database.models import PredictionLog
@@ -1198,7 +1323,9 @@ def admin_get_predictions(limit: int = 200, offset: int = 0) -> dict:
     session = get_session()
     try:
         total = session.execute(select(func.count(PredictionLog.id))).scalar() or 0
-        stmt = select(PredictionLog).order_by(desc(PredictionLog.match_date)).limit(limit).offset(offset)
+        safe_limit = max(1, min(limit, 500))
+        safe_offset = max(0, offset)
+        stmt = select(PredictionLog).order_by(desc(PredictionLog.match_date)).limit(safe_limit).offset(safe_offset)
         rows = session.execute(stmt).scalars().all()
         predictions = [
             {
@@ -1227,13 +1354,17 @@ def admin_get_predictions(limit: int = 200, offset: int = 0) -> dict:
         return {"predictions": predictions, "total": total}
     except Exception as e:
         logger.error(f"Erreur GET /admin/predictions : {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Erreur admin interne")
     finally:
         session.close()
 
 
 @app.post("/admin/predictions/{prediction_id}", tags=["Admin"])
-def admin_update_prediction(prediction_id: int, body: PredictionUpdateRequest) -> dict:
+def admin_update_prediction(
+    prediction_id: int,
+    body: PredictionUpdateRequest,
+    _: None = Depends(require_admin_api_key),
+) -> dict:
     """Met à jour manuellement une prédiction (résultat réel, victoire/défaite)."""
     from src.database.database import get_session
     from src.database.models import PredictionLog
@@ -1292,13 +1423,13 @@ def admin_update_prediction(prediction_id: int, body: PredictionUpdateRequest) -
     except Exception as e:
         session.rollback()
         logger.error(f"Erreur POST /admin/predictions/{prediction_id} : {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Erreur admin interne")
     finally:
         session.close()
 
 
 @app.post("/admin/retrain", tags=["Admin"])
-def admin_retrain() -> dict:
+def admin_retrain(_: None = Depends(require_admin_api_key)) -> dict:
     """Lance le réentraînement du meta-learner avec le feedback des prédictions vérifiées."""
     import subprocess, sys
     logger.info("POST /admin/retrain — lancement du réentraînement")
@@ -1317,10 +1448,14 @@ def admin_retrain() -> dict:
         return {"success": False, "error": "Timeout — réentraînement trop long (>5min)"}
     except Exception as e:
         logger.error(f"Erreur POST /admin/retrain : {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Erreur admin interne")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.api.main:app", host="0.0.0.0", port=8000, reload=True)
-
+    uvicorn.run(
+        "src.api.main:app",
+        host=os.getenv("API_HOST", "127.0.0.1"),
+        port=_env_int("API_PORT", 8000, 1, 65535),
+        reload=_env_bool("UVICORN_RELOAD", False),
+    )

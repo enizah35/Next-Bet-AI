@@ -9,11 +9,13 @@ import { FormDots } from "@/components/ui/FormDots";
 import { TeamLogo } from "@/components/TeamLogo";
 import { I } from "@/components/Icons";
 import { LiveStatusPill } from "@/components/LiveStatusPill";
+import { PredictionLoading } from "@/components/PredictionLoading";
 import { useLiveMatches, type MatchLiveStatus } from "@/hooks/useLiveMatches";
 
 type Match = {
   id: number; competition: string; league: string; date: string;
   homeTeam: string; awayTeam: string;
+  homeLogo?: string | null; awayLogo?: string | null;
   probs: { p1: number; pn: number; p2: number };
   odds?: { h?: number; d?: number; a?: number; home?: number; draw?: number; away?: number };
   valueBet?: { active?: boolean; edge?: number; selection?: string; bookmaker?: string };
@@ -32,66 +34,51 @@ type BetBuilderSelection = {
   confidence?: number;
   odds?: number;
   bookmaker?: string;
+  odds_source?: string;
+};
+type BetBuilderCombo = {
+  id?: string;
+  profile?: string;
+  label?: string;
+  rationale?: string;
+  confidence_range?: { min?: number; max?: number; label?: string };
+  selections?: BetBuilderSelection[];
+  combined_odds?: number;
+  combined_confidence?: number;
+  combined_probability?: number;
+  edge?: number;
+  source?: string;
+  method?: string;
 };
 type BetBuilder = {
   selections?: BetBuilderSelection[];
+  combos?: BetBuilderCombo[];
   combined_odds?: number;
   combined_confidence?: number;
   source?: string;
   profile?: string;
 };
-type Leg = { key?: string; label: string; cat: string; odds: number; confidence?: number; bookmaker?: string };
-type Combo = { id: string; profile: "safe" | "balanced" | "bold"; confidence: number; legs: Leg[]; totalOdds: number; combinedProb: number; edge: number };
+type Leg = { key?: string; label: string; cat: string; odds: number; confidence?: number; bookmaker?: string; oddsSource?: string };
+type Combo = {
+  id: string;
+  profile: "safe" | "balanced" | "bold";
+  confidence: number;
+  legs: Leg[];
+  totalOdds: number;
+  combinedProb: number;
+  edge: number;
+  rationale?: string;
+  rangeLabel?: string;
+  source?: string;
+  method?: string;
+};
 
 function buildCombos(m: Match): Combo[] {
   return buildRealCombos(m);
-
-  const pr = m.probs ?? { p1: 33, pn: 33, p2: 33 };
-  const st = m.stats ?? {};
-  const fav = pr.p1 >= pr.p2 ? "home" : "away";
-  const favTeam = fav === "home" ? m.homeTeam : m.awayTeam;
-  const favProb = Math.max(pr.p1, pr.p2);
-  const favOdds = fav === "home" ? (m.odds?.h ?? 2.0) : (m.odds?.a ?? 2.0);
-  const o15 = +((100 / (st.over15_pct ?? 75)) * 0.95).toFixed(2);
-  const o25 = +((100 / (st.over25_pct ?? 60)) * 0.95).toFixed(2);
-  const btts = +((100 / (st.btts_pct ?? 55)) * 0.95).toFixed(2);
-  const dcOdds = +((1 / ((favProb + pr.pn) / 100)) * 0.93).toFixed(2);
-
-  const configs: Array<{ id: string; profile: "safe" | "balanced" | "bold"; confidence: number; legs: Leg[] }> = [
-    { id: "safe", profile: "safe", confidence: 78, legs: [{ label: "Plus de 1.5 but", cat: "Total · Match", odds: o15 }, { label: `Double chance ${fav === "home" ? "1N" : "N2"}`, cat: "Double chance", odds: dcOdds }] },
-    { id: "balanced", profile: "balanced", confidence: 64, legs: [{ label: `Victoire ${favTeam}`, cat: "1N2", odds: favOdds }, { label: "Plus de 2.5 buts", cat: "Total · Match", odds: o25 }, { label: "Les deux marquent", cat: "BTTS", odds: btts }] },
-    { id: "bold", profile: "bold", confidence: 41, legs: [{ label: `Victoire ${favTeam}`, cat: "1N2", odds: favOdds }, { label: "Plus de 3.5 buts", cat: "Total · Match", odds: +(o25 * 1.6).toFixed(2) }, { label: "Les deux marquent", cat: "BTTS", odds: btts }, { label: `${favTeam} marque en 1ʳᵉ MT`, cat: "Mi-temps", odds: 1.7 }] },
-  ];
-
-  return configs.map((c) => {
-    const totalOdds = c.legs.reduce((a, l) => a * l.odds, 1);
-    return { ...c, totalOdds, combinedProb: c.confidence * 0.85, edge: ((c.confidence / 100) * totalOdds - 1) * 100 };
-  });
 }
 
 function clampPct(value: number) {
-  return Math.max(1, Math.min(99, Number.isFinite(value) ? value : 50));
-}
-
-function fairOdds(confidence: number, haircut = 0.94) {
-  return +Math.max(1.01, (100 / clampPct(confidence)) * haircut).toFixed(2);
-}
-
-function marketOdd(m: Match, key: "h" | "d" | "a") {
-  const legacy = key === "h" ? "home" : key === "d" ? "draw" : "away";
-  return m.odds?.[key] ?? m.odds?.[legacy];
-}
-
-function makeRealCombo(id: string, profile: Combo["profile"], legs: Leg[], backendConfidence?: number, backendOdds?: number): Combo | null {
-  if (legs.length === 0) return null;
-  const totalOdds = backendOdds && legs.length > 2
-    ? backendOdds
-    : +legs.reduce((acc, leg) => acc * leg.odds, 1).toFixed(2);
-  const productProb = legs.reduce((acc, leg) => acc * (clampPct(leg.confidence ?? 50) / 100), 1) * 100;
-  const combinedProb = backendConfidence && legs.length > 2 ? backendConfidence : +productProb.toFixed(1);
-  const confidence = Math.round(combinedProb);
-  const edge = +(((combinedProb / 100) * totalOdds - 1) * 100).toFixed(1);
-  return { id, profile, confidence, legs, totalOdds, combinedProb, edge };
+  return Math.max(1, Math.min(100, Number.isFinite(value) ? value : 50));
 }
 
 function backendLeg(selection: BetBuilderSelection, index: number): Leg {
@@ -100,82 +87,59 @@ function backendLeg(selection: BetBuilderSelection, index: number): Leg {
     key: selection.key ?? `leg-${index}`,
     label: selection.label_fr ?? selection.label ?? "Selection IA",
     cat: selection.category ?? "Marche",
-    odds: selection.odds && selection.odds > 1 ? selection.odds : fairOdds(confidence),
+    odds: selection.odds && selection.odds > 1 ? selection.odds : 0,
     confidence,
     bookmaker: selection.bookmaker || undefined,
+    oddsSource: selection.odds_source,
   };
 }
 
-function heuristicLegs(m: Match): Leg[] {
-  const pr = m.probs ?? { p1: 33, pn: 33, p2: 33 };
-  const st = m.stats ?? {};
-  const fav = pr.p1 >= pr.p2 ? "home" : "away";
-  const favTeam = fav === "home" ? m.homeTeam : m.awayTeam;
-  const favProb = Math.max(pr.p1, pr.p2);
-  const favOdds = fav === "home" ? marketOdd(m, "h") : marketOdd(m, "a");
-  const dcConfidence = clampPct(favProb + pr.pn);
-  const over15 = clampPct(st.over15_pct ?? 0);
-  const over25 = clampPct(st.over25_pct ?? 0);
-  const btts = clampPct(st.btts_pct ?? 0);
-  const predictedGoals = st.predicted_goals ?? 2.5;
-  const legs: Leg[] = [];
+function normalizeProfile(profile: string | undefined, index: number): Combo["profile"] {
+  if (profile === "safe" || profile === "balanced" || profile === "bold") return profile;
+  return (["safe", "balanced", "bold"] as const)[index] ?? "balanced";
+}
 
-  if (dcConfidence >= 68) {
-    legs.push({ key: "dc", label: `Double chance ${fav === "home" ? "1N" : "N2"}`, cat: "Double chance", confidence: dcConfidence, odds: fairOdds(dcConfidence, 0.93) });
-  }
-  if (over15 >= 72) {
-    legs.push({ key: "over_15", label: "Plus de 1.5 buts", cat: "Total match", confidence: over15, odds: fairOdds(over15, 0.95) });
-  } else if (predictedGoals <= 2.4) {
-    const under35Confidence = clampPct(72 + (2.4 - predictedGoals) * 8);
-    legs.push({ key: "under_35", label: "Moins de 3.5 buts", cat: "Total match", confidence: under35Confidence, odds: fairOdds(under35Confidence, 0.94) });
-  }
-  if (over25 >= 56) {
-    legs.push({ key: "over_25", label: "Plus de 2.5 buts", cat: "Total match", confidence: over25, odds: fairOdds(over25, 0.96) });
-  }
-  if (btts >= 56) {
-    legs.push({ key: "btts_yes", label: "Les deux marquent", cat: "BTTS", confidence: btts, odds: fairOdds(btts, 0.96) });
-  } else if (btts <= 44) {
-    const noBttsConfidence = 100 - btts;
-    legs.push({ key: "btts_no", label: "Au moins une equipe ne marque pas", cat: "BTTS", confidence: noBttsConfidence, odds: fairOdds(noBttsConfidence, 0.96) });
-  }
-  if (favProb >= 50) {
-    legs.push({ key: "fav_win", label: `Victoire ${favTeam}`, cat: "1N2", confidence: favProb, odds: favOdds ?? fairOdds(favProb, 0.98) });
-  }
-  if (pr.pn >= 33) {
-    legs.push({ key: "draw", label: "Match nul", cat: "1N2", confidence: pr.pn, odds: m.odds?.d ?? m.odds?.draw ?? fairOdds(pr.pn, 0.98) });
-  }
+function backendComboToCombo(combo: BetBuilderCombo, index: number): Combo | null {
+  const legs = combo.selections
+    ?.map(backendLeg)
+    .filter((leg) => leg.odds >= 1.05 && (leg.confidence ?? 0) >= 20) ?? [];
 
-  return legs.sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  if (legs.length < 2) return null;
+
+  const totalOdds = combo.combined_odds && combo.combined_odds >= 1.05
+    ? combo.combined_odds
+    : +legs.reduce((acc, leg) => acc * leg.odds, 1).toFixed(2);
+  const productProb = legs.reduce((acc, leg) => acc * (clampPct(leg.confidence ?? 50) / 100), 1) * 100;
+  const combinedProb = combo.combined_probability ?? combo.combined_confidence ?? +productProb.toFixed(1);
+  const edge = combo.edge ?? +(((combinedProb / 100) * totalOdds - 1) * 100).toFixed(1);
+
+  return {
+    id: combo.id ?? `ai-combo-${index}`,
+    profile: normalizeProfile(combo.profile ?? combo.id, index),
+    confidence: Math.round(clampPct(combinedProb)),
+    legs,
+    totalOdds,
+    combinedProb,
+    edge,
+    rationale: combo.rationale,
+    rangeLabel: combo.confidence_range?.label ?? combo.label,
+    source: combo.source,
+    method: combo.method,
+  };
 }
 
 function buildRealCombos(m: Match): Combo[] {
-  const backendSelections = m.betBuilder?.selections?.map(backendLeg).filter((leg) => (leg.confidence ?? 0) >= 40) ?? [];
-  const sourceLegs = backendSelections.length > 0 ? backendSelections : heuristicLegs(m);
-  if (sourceLegs.length === 0) return [];
+  const aiCombos = m.betBuilder?.combos
+    ?.map(backendComboToCombo)
+    .filter(Boolean) as Combo[] | undefined;
 
-  const safeLegs = sourceLegs.filter((leg) => (leg.confidence ?? 0) >= 65).slice(0, Math.min(2, sourceLegs.length));
-  const balancedLegs = sourceLegs.slice(0, Math.min(3, sourceLegs.length));
-  const boldLegs = sourceLegs.slice(0, Math.min(4, sourceLegs.length));
-
-  const combos = [
-    makeRealCombo("safe", "safe", safeLegs.length > 0 ? safeLegs : sourceLegs.slice(0, 1)),
-    makeRealCombo("balanced", "balanced", balancedLegs),
-    makeRealCombo("bold", "bold", boldLegs, m.betBuilder?.combined_confidence, m.betBuilder?.combined_odds),
-  ].filter(Boolean) as Combo[];
-
-  const seen = new Set<string>();
-  return combos.filter((combo) => {
-    const sig = combo.legs.map((leg) => leg.key ?? leg.label).join("|");
-    if (seen.has(sig)) return false;
-    seen.add(sig);
-    return true;
-  });
+  return aiCombos?.slice(0, 3) ?? [];
 }
 
 const comboPalette = {
-  safe:     { tint: "var(--good-tint)",  color: "var(--good)",  label: "Sûr",       icon: <I.Shield size={13} sw={1.8} /> },
-  balanced: { tint: "var(--value-tint)", color: "var(--value)", label: "Équilibré",  icon: <I.Target size={13} sw={1.8} /> },
-  bold:     { tint: "var(--warn-tint)",  color: "var(--warn)",  label: "Audacieux",  icon: <I.Flame size={13} sw={1.8} /> },
+  safe:     { tint: "var(--good-tint)",  color: "var(--good)",  label: "66-100%", icon: <I.Shield size={13} sw={1.8} /> },
+  balanced: { tint: "var(--value-tint)", color: "var(--value)", label: "33-66%",  icon: <I.Target size={13} sw={1.8} /> },
+  bold:     { tint: "var(--warn-tint)",  color: "var(--warn)",  label: "0-33%",   icon: <I.Flame size={13} sw={1.8} /> },
 };
 
 function StatTile({ label, value }: { label: string; value: string }) {
@@ -189,16 +153,28 @@ function StatTile({ label, value }: { label: string; value: string }) {
 
 function AIComboCard({ combo }: { combo: Combo }) {
   const p = comboPalette[combo.profile];
+  const rangeLabel = combo.rangeLabel ?? p.label;
+  const edgePrefix = combo.edge >= 0 ? "+" : "";
+  const edgeColor = combo.edge >= 0 ? "var(--good)" : "var(--text-muted)";
+  const totalOddsLabel = combo.source === "ai_model" ? "Cote juste IA" : "Cote totale";
   return (
     <Card className="ai-combo-card" pad={0} hover={false} style={{ overflow: "hidden" }}>
       <div style={{ padding: "12px 16px", background: p.tint, borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, color: p.color, fontSize: 12, fontWeight: 600 }}>
-          {p.icon} Combiné {p.label}
+          {p.icon} Combiné {rangeLabel}
         </div>
         <span className="mono tabular" style={{ fontSize: 11, color: p.color, fontWeight: 600 }}>Conf. {combo.confidence}%</span>
       </div>
+      {combo.rationale && (
+        <div style={{ padding: "10px 16px 0", fontSize: 11, color: "var(--text-soft)", lineHeight: 1.45 }}>
+          {combo.rationale}
+        </div>
+      )}
       <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-        {combo.legs.map((leg, i) => (
+        {combo.legs.map((leg, i) => {
+          const sourceLabel = leg.bookmaker ?? (leg.oddsSource === "model_fair" ? "Cote IA" : "");
+
+          return (
           <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
             <div style={{
               width: 18, height: 18, borderRadius: "50%",
@@ -211,20 +187,21 @@ function AIComboCard({ combo }: { combo: Combo }) {
               <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
                 {leg.cat}
                 {leg.confidence ? ` · ${Math.round(leg.confidence)}%` : ""}
-                {leg.bookmaker ? ` · ${leg.bookmaker}` : ""}
+                {sourceLabel ? ` · ${sourceLabel}` : ""}
               </div>
             </div>
             <div className="mono tabular" style={{ fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{leg.odds?.toFixed(2) ?? "—"}</div>
           </div>
-        ))}
+          );
+        })}
       </div>
       <div style={{ padding: "14px 16px", background: "var(--bg-inset)", borderTop: "1px solid var(--border)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-          <span className="overline">Cote totale</span>
+          <span className="overline">{totalOddsLabel}</span>
           <span className="mono tabular" style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{combo.totalOdds?.toFixed(2)}</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-soft)", marginBottom: 12 }}>
-          <span>Edge IA <span className="mono tabular" style={{ color: "var(--good)", fontWeight: 600 }}>+{combo.edge?.toFixed(1)}%</span></span>
+          <span>Edge IA <span className="mono tabular" style={{ color: edgeColor, fontWeight: 600 }}>{edgePrefix}{combo.edge?.toFixed(1)}%</span></span>
           <span>Probabilité <span className="mono tabular">{combo.combinedProb?.toFixed(1)}%</span></span>
         </div>
         <Button variant="secondary" size="sm" style={{ width: "100%" }} icon={<I.Bolt size={13} sw={2} />}>
@@ -236,7 +213,7 @@ function AIComboCard({ combo }: { combo: Combo }) {
 }
 
 export default function StatsClient({ initialMatches = [] }: { initialMatches: Match[] }) {
-  const { matches: liveMatches, state: liveState } = useLiveMatches<Match>(initialMatches, 40);
+  const { matches: liveMatches, state: liveState } = useLiveMatches<Match>(initialMatches, 300);
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(initialMatches[0]?.id ?? null);
   const [openedMatch, setOpenedMatch] = useState<Match | null>(null);
 
@@ -257,6 +234,7 @@ export default function StatsClient({ initialMatches = [] }: { initialMatches: M
 
   const combos = useMemo(() => (selectedMatch ? buildCombos(selectedMatch) : []), [selectedMatch]);
   const st = selectedMatch?.stats ?? {};
+  const isLoadingPredictions = liveMatches.length === 0 && (liveState === "refreshing" || liveState === "stale");
 
   return (
     <AppShell>
@@ -264,10 +242,16 @@ export default function StatsClient({ initialMatches = [] }: { initialMatches: M
         <PageHeader
           title="Stats & AI Bet Builder"
           actions={<LiveStatusPill state={liveState} />}
-          subtitle="Stats prédictives par match et combinés générés par l'IA selon votre appétit au risque."
+          subtitle={isLoadingPredictions ? "Chargement des stats prédictives en cours." : "Stats prédictives par match et combinés générés par l'IA selon votre appétit au risque."}
         />
 
-        {liveMatches.length === 0 ? (
+        {isLoadingPredictions ? (
+          <PredictionLoading
+            title="Chargement des stats"
+            subtitle="Les données de matchs et les combinés vont apparaître automatiquement."
+            rows={3}
+          />
+        ) : liveMatches.length === 0 ? (
           <div style={{ padding: "80px 0", textAlign: "center" }}>
             <div className="mono" style={{ fontSize: 14, color: "var(--text-muted)" }}>Aucune stat trouvée.</div>
           </div>
@@ -294,8 +278,8 @@ export default function StatsClient({ initialMatches = [] }: { initialMatches: M
                         boxShadow: m.id === selectedMatch?.id ? "var(--shadow-card)" : "none",
                       }}
                     >
-                      <TeamLogo name={m.homeTeam} size={22} />
-                      <TeamLogo name={m.awayTeam} size={22} />
+                      <TeamLogo name={m.homeTeam} logoUrl={m.homeLogo} size={22} />
+                      <TeamLogo name={m.awayTeam} logoUrl={m.awayLogo} size={22} />
                       <span>{m.homeTeam.slice(0, 3).toUpperCase()} · {m.awayTeam.slice(0, 3).toUpperCase()}</span>
                     </button>
                   ))}
@@ -307,7 +291,7 @@ export default function StatsClient({ initialMatches = [] }: { initialMatches: M
                   {/* Match header */}
                   <div className="stats-match-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, paddingBottom: 24, borderBottom: "1px solid var(--border)", gap: 12 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
-                      <TeamLogo name={selectedMatch.homeTeam} size={44} />
+                      <TeamLogo name={selectedMatch.homeTeam} logoUrl={selectedMatch.homeLogo} size={44} />
                       <div style={{ minWidth: 0 }}>
                         <div className="stats-team-name" style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.015em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selectedMatch.homeTeam}</div>
                         {selectedMatch.details?.homeElo && <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>Elo {selectedMatch.details.homeElo}</div>}
@@ -319,7 +303,7 @@ export default function StatsClient({ initialMatches = [] }: { initialMatches: M
                         <div className="stats-team-name" style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.015em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selectedMatch.awayTeam}</div>
                         {selectedMatch.details?.awayElo && <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>Elo {selectedMatch.details.awayElo}</div>}
                       </div>
-                      <TeamLogo name={selectedMatch.awayTeam} size={44} />
+                      <TeamLogo name={selectedMatch.awayTeam} logoUrl={selectedMatch.awayLogo} size={44} />
                     </div>
                   </div>
 
@@ -363,11 +347,19 @@ export default function StatsClient({ initialMatches = [] }: { initialMatches: M
                   <h3 style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.015em" }}>AI Bet Builder</h3>
                 </div>
                 <p style={{ fontSize: 12, color: "var(--text-soft)", lineHeight: 1.5, marginTop: 8 }}>
-                  L'IA compose 3 combinés optimisés pour ce match. Choisis selon ton appétit au risque.
+                  L'IA compose 3 combinés réfléchis par tranche de confiance: 66-100%, 33-66% et 0-33%.
                 </p>
               </Card>
 
-              {combos.map((c) => <AIComboCard key={c.id} combo={c} />)}
+              {combos.length > 0 ? (
+                combos.map((c) => <AIComboCard key={c.id} combo={c} />)
+              ) : (
+                <Card pad={20}>
+                  <div className="mono" style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                    Aucun combine IA fiable pour ce match: le moteur n'a pas assez de marches compatibles.
+                  </div>
+                </Card>
+              )}
 
               <div style={{ padding: "10px 12px", borderRadius: 10, background: "var(--bg-inset)", border: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "flex-start" }}>
                 <I.Info size={13} sw={1.8} style={{ color: "var(--text-muted)", flexShrink: 0, marginTop: 2 }} />

@@ -15,6 +15,8 @@ interface Match {
   date: string;
   homeTeam: string;
   awayTeam: string;
+  homeLogo?: string | null;
+  awayLogo?: string | null;
   probs: { p1: number; pn: number; p2: number };
   odds?: { h?: number; d?: number; a?: number; home?: number; draw?: number; away?: number };
   valueBet?: { active?: boolean; edge?: number; selection?: string; target?: string; bookmaker?: string; bestOdds?: number };
@@ -112,6 +114,16 @@ const getFairOdd = (match: Match) => {
   return pct > 0 ? 100 / pct : undefined;
 };
 
+const getMainPrediction = (match: Match) => {
+  const candidates = [
+    { key: "1", label: match.homeTeam, pct: match.probs.p1, color: "var(--acc-home)" },
+    { key: "N", label: "Match nul", pct: match.probs.pn, color: "var(--acc-draw)" },
+    { key: "2", label: match.awayTeam, pct: match.probs.p2, color: "var(--acc-away)" },
+  ];
+
+  return candidates.reduce((best, current) => (current.pct > best.pct ? current : best), candidates[0]);
+};
+
 const playerLabel = (player: PlayerStatus) => {
   if (typeof player === "string") return player;
   const detail = player.reason || player.type;
@@ -127,9 +139,10 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
 
   if (!match) return null;
 
-  const { competition, date, homeTeam, awayTeam, probs, valueBet, stats, details } = match;
+  const { competition, date, homeTeam, awayTeam, homeLogo, awayLogo, probs, valueBet, stats, details } = match;
   const displayedOdd = getValueBetOdd(match);
   const fairOdd = getFairOdd(match);
+  const mainPrediction = getMainPrediction(match);
   const fmt = new Date(date).toLocaleString("fr-FR", { weekday: "long", day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit" });
   const availability = match.availability;
   const homeSquad = availability?.homeSquad;
@@ -187,7 +200,7 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
 
           <div className="modal-teams" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 0 }}>
-              <TeamLogo name={homeTeam} size={52} />
+              <TeamLogo name={homeTeam} logoUrl={homeLogo} size={52} />
               <div style={{ minWidth: 0 }}>
                 <div className="modal-team-name" style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{homeTeam}</div>
                 <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
@@ -205,13 +218,52 @@ export function MatchModal({ match, onClose }: { match: Match | null; onClose: (
                   {details?.awayDaysRest && ` · ${details.awayDaysRest}j repos`}
                 </div>
               </div>
-              <TeamLogo name={awayTeam} size={52} />
+              <TeamLogo name={awayTeam} logoUrl={awayLogo} size={52} />
             </div>
           </div>
         </div>
 
         {/* Body */}
         <div className="modal-body" style={{ padding: 28, display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* Main prediction */}
+          <div style={{ padding: 18, borderRadius: 14, background: "var(--bg-inset)", border: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <span
+                className="mono tabular"
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 8,
+                  background: mainPrediction.color,
+                  color: "white",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}
+              >
+                {mainPrediction.key}
+              </span>
+              <span className="overline" style={{ color: mainPrediction.color }}>Prédiction IA</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 18, fontWeight: 650, letterSpacing: "-0.015em", overflowWrap: "anywhere" }}>
+                  {mainPrediction.label}
+                </div>
+                {match.recommendation && (
+                  <div style={{ fontSize: 13, color: "var(--text-soft)", marginTop: 4, overflowWrap: "anywhere" }}>
+                    {match.recommendation}
+                  </div>
+                )}
+              </div>
+              <div className="mono tabular" style={{ fontSize: 24, fontWeight: 700, color: mainPrediction.color, whiteSpace: "nowrap" }}>
+                {mainPrediction.pct}%
+              </div>
+            </div>
+          </div>
+
           {/* Value bet banner */}
           {valueBet?.active && (
             <div style={{ padding: 18, borderRadius: 14, background: "var(--value-tint)", border: "1px solid var(--value)" }}>

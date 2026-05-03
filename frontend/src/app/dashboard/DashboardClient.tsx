@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell, PageHeader } from "@/components/AppShell";
 import { MatchCard } from "@/components/MatchCard";
 import { MatchModal } from "@/components/MatchModal";
@@ -12,11 +12,14 @@ import { ProbBar } from "@/components/ui/ProbBar";
 import { TeamLogo } from "@/components/TeamLogo";
 import { I } from "@/components/Icons";
 import { LiveStatusPill } from "@/components/LiveStatusPill";
+import { PredictionLoading } from "@/components/PredictionLoading";
 import { useLiveMatches, type MatchLiveStatus } from "@/hooks/useLiveMatches";
+import { getPublicApiUrl } from "@/utils/publicApi";
 
 type Match = {
   id: number; competition: string; league: string; date: string;
   homeTeam: string; awayTeam: string;
+  homeLogo?: string | null; awayLogo?: string | null;
   probs: { p1: number; pn: number; p2: number };
   odds?: { h?: number; d?: number; a?: number; home?: number; draw?: number; away?: number };
   valueBet?: { active?: boolean; edge?: number; selection?: string; target?: string; bookmaker?: string; bestOdds?: number };
@@ -42,6 +45,25 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "confidence_desc", label: "Confiance max" },
   { value: "value_edge_desc", label: "Value edge" },
   { value: "league_asc", label: "Ligue A-Z" },
+];
+
+const LEAGUE_OPTIONS = [
+  "Champions League",
+  "Premier League",
+  "Championship",
+  "Ligue 1",
+  "Ligue 2",
+  "Bundesliga",
+  "2. Bundesliga",
+  "La Liga",
+  "La Liga 2",
+  "Serie A",
+  "Serie B",
+  "Eredivisie",
+  "Primeira Liga",
+  "Süper Lig",
+  "Belgian Pro League",
+  "Scottish Premiership",
 ];
 
 const matchTime = (match: Match) => {
@@ -124,13 +146,13 @@ function ValueBetHero({ match, onClick }: { match: Match; onClick: () => void })
           </div>
           <div className="matchup-row" style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
-              <TeamLogo name={match.homeTeam} size={44} />
+              <TeamLogo name={match.homeTeam} logoUrl={match.homeLogo} size={44} />
               <div className="value-hero-team-name" style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{match.homeTeam}</div>
             </div>
             <div className="mono" style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>VS</div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, justifyContent: "flex-end", minWidth: 0 }}>
               <div className="value-hero-team-name" style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{match.awayTeam}</div>
-              <TeamLogo name={match.awayTeam} size={44} />
+              <TeamLogo name={match.awayTeam} logoUrl={match.awayLogo} size={44} />
             </div>
           </div>
           <ProbBar p1={match.probs.p1} pn={match.probs.pn} p2={match.probs.p2} height={10} />
@@ -183,10 +205,10 @@ function MatchListView({ matches, onOpen }: { matches: Match[]; onOpen: (m: Matc
             {new Date(m.date).toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
           </div>
           <div className="mobile-match-line" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <TeamLogo name={m.homeTeam} size={24} />
+            <TeamLogo name={m.homeTeam} logoUrl={m.homeLogo} size={24} />
             <span className="mobile-match-team" style={{ fontSize: 13, fontWeight: 500 }}>{m.homeTeam}</span>
             <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>vs</span>
-            <TeamLogo name={m.awayTeam} size={24} />
+            <TeamLogo name={m.awayTeam} logoUrl={m.awayLogo} size={24} />
             <span className="mobile-match-team" style={{ fontSize: 13, fontWeight: 500 }}>{m.awayTeam}</span>
           </div>
           <div className="mobile-list-probs">
@@ -216,16 +238,78 @@ export default function DashboardClient({ initialMatches = [] }: { initialMatche
   const [view, setView] = useState("cards");
   const [sort, setSort] = useState<SortKey>("date_asc");
   const [openedMatch, setOpenedMatch] = useState<Match | null>(null);
-  const { matches: liveMatches, state: liveState } = useLiveMatches<Match>(initialMatches, 40);
+  const { matches: liveMatches, state: liveState } = useLiveMatches<Match>(initialMatches, 300);
+  const [leagueMatches, setLeagueMatches] = useState<Match[] | null>(null);
+  const [leagueLoading, setLeagueLoading] = useState(false);
 
-  const availableLeagues = useMemo(() => {
-    const seen = new Set<string>();
-    return liveMatches.map((m) => m.league ?? m.competition).filter((l) => l && !seen.has(l) && seen.add(l));
-  }, [liveMatches]);
+  useEffect(() => {
+    if (league === "all") {
+      setLeagueMatches(null);
+      setLeagueLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let attempt = 0;
+    let timer: number | undefined;
+
+    const fetchLeague = async () => {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), attempt === 0 ? 12000 : 7000);
+
+      try {
+        const url = `${getPublicApiUrl()}/predictions/upcoming/full-cached?league=${encodeURIComponent(league)}&limit=80`;
+        const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
+        if (!response.ok) throw new Error(`League refresh failed: ${response.status}`);
+
+        const data = (await response.json()) as Match[];
+        if (cancelled || !Array.isArray(data)) return;
+
+        if (data.length === 0 && attempt < 6) {
+          attempt += 1;
+          timer = window.setTimeout(fetchLeague, 5000);
+          return;
+        }
+
+        setLeagueMatches(data);
+        setLeagueLoading(false);
+      } catch {
+        if (cancelled) return;
+        attempt += 1;
+        if (attempt < 4) {
+          timer = window.setTimeout(fetchLeague, 6000);
+        } else {
+          setLeagueMatches([]);
+          setLeagueLoading(false);
+        }
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    };
+
+    setLeagueMatches(null);
+    setLeagueLoading(true);
+    fetchLeague();
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [league]);
+
+  const visibleMatches = useMemo(() => {
+    if (league === "all") return liveMatches;
+    return leagueMatches ?? liveMatches.filter((m) => (m.league ?? m.competition) === league);
+  }, [league, leagueMatches, liveMatches]);
 
   const filtered = useMemo(() =>
-    league === "all" ? liveMatches : liveMatches.filter((m) => (m.league ?? m.competition) === league),
-    [liveMatches, league]
+    league === "all" ? visibleMatches : visibleMatches.filter((m) => (m.league ?? m.competition) === league),
+    [visibleMatches, league]
+  );
+  const isLoadingPredictions = visibleMatches.length === 0 && (
+    liveState === "refreshing" ||
+    liveState === "stale" ||
+    (league !== "all" && leagueLoading)
   );
 
   const sortedMatches = useMemo(() => {
@@ -255,7 +339,11 @@ export default function DashboardClient({ initialMatches = [] }: { initialMatche
         <PageHeader
           overline={today}
           title="Analyses"
-          subtitle={`${filtered.length} matchs à venir. ${valueBets.length} value bet${valueBets.length > 1 ? "s" : ""} détecté${valueBets.length > 1 ? "s" : ""}.`}
+          subtitle={
+            isLoadingPredictions
+              ? "Chargement des prédictions en cours."
+              : `${filtered.length} matchs à venir. ${valueBets.length} value bet${valueBets.length > 1 ? "s" : ""} détecté${valueBets.length > 1 ? "s" : ""}.`
+          }
           actions={
             <>
               <LiveStatusPill state={liveState} />
@@ -272,7 +360,13 @@ export default function DashboardClient({ initialMatches = [] }: { initialMatche
           }
         />
 
-        {liveMatches.length === 0 ? (
+        {isLoadingPredictions ? (
+          <PredictionLoading
+            title={league === "all" ? "Chargement des prédictions" : `Chargement ${league}`}
+            subtitle="Les matchs, probabilités et cotes vont apparaître automatiquement."
+            rows={4}
+          />
+        ) : visibleMatches.length === 0 ? (
           <div style={{ padding: "80px 0", textAlign: "center" }}>
             <div className="mono" style={{ fontSize: 14, color: "var(--text-muted)" }}>Aucune analyse trouvée ou impossible de charger les données.</div>
           </div>
@@ -308,7 +402,7 @@ export default function DashboardClient({ initialMatches = [] }: { initialMatche
                   </label>
                   <label className="analysis-control" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span className="overline" style={{ color: "var(--text-muted)" }}>Ligue</span>
-                    <LeagueSelect value={league} onChange={setLeague} leagues={availableLeagues} />
+                    <LeagueSelect value={league} onChange={setLeague} leagues={LEAGUE_OPTIONS} />
                   </label>
                 </div>
               </div>

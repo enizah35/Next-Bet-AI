@@ -6,11 +6,13 @@ import { Card } from "@/components/ui/Card";
 import { Tag } from "@/components/ui/Tag";
 import { I } from "@/components/Icons";
 import { LiveStatusPill } from "@/components/LiveStatusPill";
+import { PredictionLoading } from "@/components/PredictionLoading";
 import { useLiveMatches, type MatchLiveStatus } from "@/hooks/useLiveMatches";
 
 type Match = {
   id: number; competition: string; league: string; date: string;
   homeTeam: string; awayTeam: string;
+  homeLogo?: string | null; awayLogo?: string | null;
   probs: { p1: number; pn: number; p2: number };
   odds?: { h?: number; d?: number; a?: number; home?: number; draw?: number; away?: number };
   valueBet?: { active?: boolean; edge?: number; selection?: string; target?: string; bookmaker?: string };
@@ -25,6 +27,23 @@ type Tip = {
   match: Match; category: string; label: string;
   confidence: number; odds: number; edge?: number;
 };
+
+const MIN_DISPLAY_ODDS = 1.05;
+const NEXT_24_HOURS_MS = 24 * 60 * 60 * 1000;
+
+function isWithinNext24Hours(match: Match, now = new Date()): boolean {
+  const kickoffTime = new Date(match.date).getTime();
+
+  if (!Number.isFinite(kickoffTime)) return false;
+
+  const nowTime = now.getTime();
+  return kickoffTime >= nowTime && kickoffTime <= nowTime + NEXT_24_HOURS_MS;
+}
+
+function filterNext24HourMatches(matches: Match[]): Match[] {
+  const now = new Date();
+  return matches.filter((match) => isWithinNext24Hours(match, now));
+}
 
 function buildTips(matches: Match[]): Tip[] {
   const t: Tip[] = [];
@@ -48,7 +67,10 @@ function buildTips(matches: Match[]): Tip[] {
     if ((st.btts_pct ?? 0) > 60) t.push({ match: m, category: "BTTS", label: "Les deux équipes marquent", confidence: st.btts_pct!, odds: +((100 / st.btts_pct!) * 0.95).toFixed(2) });
     if ((st.over25_pct ?? 0) > 60) t.push({ match: m, category: "Goals", label: "Plus de 2.5 buts", confidence: st.over25_pct!, odds: +((100 / st.over25_pct!) * 0.95).toFixed(2) });
   }
-  return t.sort((a, b) => b.confidence - a.confidence).slice(0, 12);
+  return t
+    .filter((tip) => Number.isFinite(tip.odds) && tip.odds >= MIN_DISPLAY_ODDS)
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 12);
 }
 
 const catStyle = (c: string) => {
@@ -61,11 +83,13 @@ const confColor = (c: number) => c >= 80 ? "var(--good)" : c >= 70 ? "var(--acc-
 
 export default function TipsClient({ initialMatches = [] }: { initialMatches: Match[] }) {
   const [openedMatch, setOpenedMatch] = useState<Match | null>(null);
-  const { matches: liveMatches, state: liveState } = useLiveMatches<Match>(initialMatches, 40);
+  const { matches: liveMatches, state: liveState } = useLiveMatches<Match>(initialMatches, 300);
 
-  const tips = useMemo(() => buildTips(liveMatches), [liveMatches]);
+  const matchesInNext24Hours = useMemo(() => filterNext24HourMatches(liveMatches), [liveMatches]);
+  const tips = useMemo(() => buildTips(matchesInNext24Hours), [matchesInNext24Hours]);
   const top3 = tips.slice(0, 3);
   const rest = tips.slice(3);
+  const isLoadingPredictions = matchesInNext24Hours.length === 0 && (liveState === "refreshing" || liveState === "stale");
 
   const today = new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
 
@@ -76,12 +100,22 @@ export default function TipsClient({ initialMatches = [] }: { initialMatches: Ma
           overline={today}
           title="Tips du jour"
           actions={<LiveStatusPill state={liveState} />}
-          subtitle={`${tips.length} paris recommandés, triés par fiabilité.`}
+          subtitle={isLoadingPredictions ? "Chargement des recommandations en cours." : `${tips.length} paris recommandés sur les prochaines 24h.`}
         />
 
-        {liveMatches.length === 0 ? (
+        {isLoadingPredictions ? (
+          <PredictionLoading
+            title="Chargement des tips"
+            subtitle="Les recommandations vont apparaître automatiquement."
+            rows={3}
+          />
+        ) : liveMatches.length === 0 ? (
           <div style={{ padding: "80px 0", textAlign: "center" }}>
             <div className="mono" style={{ fontSize: 14, color: "var(--text-muted)" }}>Aucun tip généré (pas de données).</div>
+          </div>
+        ) : matchesInNext24Hours.length === 0 ? (
+          <div style={{ padding: "80px 0", textAlign: "center" }}>
+            <div className="mono" style={{ fontSize: 14, color: "var(--text-muted)" }}>Aucun match avec données fiables dans les prochaines 24h.</div>
           </div>
         ) : (
           <>

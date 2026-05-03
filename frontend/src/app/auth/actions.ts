@@ -13,33 +13,39 @@ function isRedirectError(error: unknown) {
     && (error as { digest: string }).digest.startsWith('NEXT_REDIRECT');
 }
 
+function readCredentials(formData: FormData) {
+  const email = String(formData.get('email') ?? '').trim().toLowerCase();
+  const password = String(formData.get('password') ?? '');
+  return { email, password };
+}
+
+function redirectWithAuthError(path: '/login' | '/register', message: string): never {
+  redirect(`${path}?error=${encodeURIComponent(message)}`);
+}
+
 export async function login(formData: FormData) {
-  console.log("==> login action started");
   try {
     const cookieStore = await cookies()
     const supabase = createClient(cookieStore)
 
-    const data = {
-      email: formData.get('email') as string,
-      password: formData.get('password') as string,
+    const data = readCredentials(formData);
+    if (!data.email || !data.password) {
+      redirectWithAuthError('/login', 'Email et mot de passe requis');
     }
     
-    console.log("==> attempting signInWithPassword for:", data.email);
     const { error } = await supabase.auth.signInWithPassword(data)
 
     if (error) {
-      console.log("==> auth error:", error.message);
-      redirect('/login?error=' + encodeURIComponent(error.message))
+      redirectWithAuthError('/login', error.message)
     }
 
-    console.log("==> login successful, redirecting to /dashboard");
     revalidatePath('/', 'layout')
     redirect('/dashboard')
   } catch (err: unknown) {
     if (isRedirectError(err)) {
       throw err;
     }
-    console.error("==> unexpected error in login action:", err);
+    console.error("Login action failed");
     throw err;
   }
 }
@@ -48,9 +54,9 @@ export async function signup(formData: FormData) {
   const cookieStore = await cookies()
   const supabase = createClient(cookieStore)
 
-  const data = {
-    email: formData.get('email') as string,
-    password: formData.get('password') as string,
+  const data = readCredentials(formData);
+  if (!data.email || !data.password) {
+    redirectWithAuthError('/register', 'Email et mot de passe requis');
   }
 
   try {
@@ -66,7 +72,7 @@ export async function signup(formData: FormData) {
     if (isRedirectError(err)) {
       throw err;
     }
-    console.error("Signup error:", err);
+    console.error("Signup action failed");
     throw err;
   }
 }

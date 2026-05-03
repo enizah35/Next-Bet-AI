@@ -86,7 +86,7 @@ function AuthForm() {
         )}
         {errorMsg && (
           <div style={{ padding: "12px 16px", borderRadius: 10, background: "var(--bad-tint)", color: "var(--bad)", fontSize: 13, marginBottom: 16 }}>
-            {decodeURIComponent(errorMsg)}
+            {errorMsg}
           </div>
         )}
 

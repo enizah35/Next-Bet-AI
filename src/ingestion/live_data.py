@@ -55,6 +55,7 @@ ESPN_LEAGUE_CODES: dict[str, str] = {
     "Süper Lig":      "tur.1",
     "Belgian Pro League": "bel.1",
     "Scottish Premiership": "sco.1",
+    "Champions League": "uefa.champions",
 }
 
 RSS_FEEDS = {
@@ -82,7 +83,24 @@ FAST_FALLBACK_TEAMS: dict[str, list[str]] = {
     "SÃ¼per Lig": ["Galatasaray", "Fenerbahce", "Besiktas", "Trabzonspor", "Basaksehir", "Sivasspor", "Antalyaspor", "Alanyaspor"],
     "Belgian Pro League": ["Club Brugge", "Anderlecht", "Genk", "Gent", "Antwerp", "Standard Liege", "Union SG", "Mechelen"],
     "Scottish Premiership": ["Celtic", "Rangers", "Hearts", "Hibernian", "Aberdeen", "Motherwell", "Dundee", "St Mirren"],
+    "Champions League": ["Real Madrid", "Man City", "Bayern Munich", "Paris SG", "Inter", "Liverpool", "Barcelona", "Arsenal"],
 }
+
+
+def _espn_team_logo(team: dict) -> str | None:
+    logo = team.get("logo")
+    if logo:
+        return logo
+
+    logos = team.get("logos") or []
+    if logos and isinstance(logos[0], dict):
+        return logos[0].get("href")
+
+    team_id = team.get("id")
+    if team_id:
+        return f"https://a.espncdn.com/i/teamlogos/soccer/500/{team_id}.png"
+
+    return None
 
 
 def get_news_alerts(team_name: str, entries: list) -> list[str]:
@@ -146,9 +164,12 @@ def get_upcoming_matches(league: str, use_db_fallback: bool = True) -> list[dict
             # Format ESPN: "HomeTeam vs AwayTeam" or specific components
             comps = e.get("competitions", [{}])[0].get("competitors", [])
             if len(comps) == 2:
-                # Competitor indices vary, generally home is 0, away is 1
-                home = comps[0].get("team", {}).get("name") if comps[0].get("homeAway") == "home" else comps[1].get("team", {}).get("name")
-                away = comps[1].get("team", {}).get("name") if comps[1].get("homeAway") == "away" else comps[0].get("team", {}).get("name")
+                home_comp = next((comp for comp in comps if comp.get("homeAway") == "home"), comps[0])
+                away_comp = next((comp for comp in comps if comp.get("homeAway") == "away"), comps[1])
+                home_team = home_comp.get("team", {}) or {}
+                away_team = away_comp.get("team", {}) or {}
+                home = home_team.get("name")
+                away = away_team.get("name")
                 date_iso = e.get("date")
                 
                 if home and away:
@@ -156,6 +177,10 @@ def get_upcoming_matches(league: str, use_db_fallback: bool = True) -> list[dict
                     matches_list.append({
                         "homeTeam": get_fd_name_espn(home),
                         "awayTeam": get_fd_name_espn(away),
+                        "homeLogo": _espn_team_logo(home_team),
+                        "awayLogo": _espn_team_logo(away_team),
+                        "homeEspnId": home_team.get("id"),
+                        "awayEspnId": away_team.get("id"),
                         "dateStr": date_iso, # Format 2026-04-01T20:00Z
                     })
     except Exception as ex:
@@ -295,6 +320,10 @@ def enrich_pipeline(league: str, fast: bool = False) -> list[dict]:
             "fixtureId": m.get("fixtureId"),
             "apiHomeTeamId": m.get("apiHomeTeamId"),
             "apiAwayTeamId": m.get("apiAwayTeamId"),
+            "homeLogo": m.get("homeLogo"),
+            "awayLogo": m.get("awayLogo"),
+            "homeEspnId": m.get("homeEspnId"),
+            "awayEspnId": m.get("awayEspnId"),
             "apiFootballFixture": m.get("apiFootballFixture") or {},
             "weatherCode": weather_code,
             "injuriesHome": home_news,

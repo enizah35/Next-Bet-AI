@@ -292,14 +292,6 @@ body {
   max-width: 680px;
 }
 
-.results-container {
-  max-width: 850px;
-}
-
-.results-filter {
-  max-width: 100%;
-}
-
 .live-status-pill {
   display: inline-flex;
   align-items: center;
@@ -322,6 +314,107 @@ body {
   border-radius: 999px;
 }
 
+.prediction-loading {
+  width: min(100%, 760px);
+  margin: 48px auto 0;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-card);
+}
+
+.prediction-loading-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.prediction-loading-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 3px solid var(--border);
+  border-top-color: var(--acc-home);
+  flex-shrink: 0;
+  animation: spin 0.8s linear infinite;
+}
+
+.prediction-loading-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.prediction-loading-subtitle {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.prediction-loading-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prediction-loading-row {
+  min-height: 70px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-inset);
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 120px;
+  align-items: center;
+  gap: 12px;
+  animation: predictionPulse 1.35s ease-in-out infinite;
+}
+
+.prediction-loading-logo,
+.prediction-loading-line,
+.prediction-loading-bar {
+  background: color-mix(in oklab, var(--text-muted) 16%, transparent);
+}
+
+.prediction-loading-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.prediction-loading-lines {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prediction-loading-line {
+  height: 10px;
+  border-radius: 999px;
+}
+
+.prediction-loading-line.wide {
+  width: min(100%, 260px);
+}
+
+.prediction-loading-line.narrow {
+  width: min(70%, 160px);
+}
+
+.prediction-loading-bars {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.prediction-loading-bar {
+  height: 28px;
+  border-radius: 8px;
+}
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -340,6 +433,11 @@ body {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes predictionPulse {
+  0%, 100% { opacity: 0.62; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-1px); }
 }
 
 /* ── Responsive ── */
@@ -476,6 +574,20 @@ body {
 
   .app-page {
     padding: 0 16px 96px !important;
+  }
+
+  .prediction-loading {
+    margin-top: 28px !important;
+    padding: 16px !important;
+    border-radius: 14px !important;
+  }
+
+  .prediction-loading-row {
+    grid-template-columns: 34px minmax(0, 1fr) !important;
+  }
+
+  .prediction-loading-bars {
+    grid-column: 1 / -1;
   }
 
   .landing-nav {
@@ -806,47 +918,6 @@ body {
     display: none !important;
   }
 
-  .results-overview {
-    padding: 20px !important;
-    gap: 18px !important;
-  }
-
-  .results-stat-counts {
-    width: 100% !important;
-    justify-content: space-between !important;
-    gap: 10px !important;
-  }
-
-  .results-filter {
-    width: 100% !important;
-    overflow-x: auto !important;
-  }
-
-  .results-filter button {
-    flex: 1 0 auto !important;
-  }
-
-  .results-builder-header,
-  .results-selection-row {
-    align-items: flex-start !important;
-    gap: 10px !important;
-  }
-
-  .results-selection-row {
-    flex-wrap: wrap !important;
-  }
-
-  .results-history-row {
-    align-items: flex-start !important;
-    flex-wrap: wrap !important;
-  }
-
-  .results-history-status {
-    width: 100% !important;
-    text-align: left !important;
-    padding-left: 44px !important;
-  }
-
   .modal-backdrop {
     align-items: stretch !important;
     justify-content: stretch !important;
@@ -1015,8 +1086,7 @@ body {
     color: var(--text-soft) !important;
   }
 
-  .app-page,
-  .results-container {
+  .app-page {
     width: min(100%, 760px) !important;
     margin: 0 auto !important;
     padding: 0 var(--mobile-gutter) calc(var(--mobile-nav-height) + 28px + env(safe-area-inset-bottom)) !important;
@@ -1071,7 +1141,6 @@ body {
   .dashboard-view-toggle button,
   .dropdown-select > button,
   .stats-match-pill,
-  .results-filter button,
   .mobile-bottom-link {
     min-height: var(--mobile-touch) !important;
   }
@@ -1133,9 +1202,7 @@ body {
 
   .match-card,
   .value-hero-card,
-  .ai-combo-card,
-  .results-overview,
-  .results-history-row {
+  .ai-combo-card {
     border-radius: var(--mobile-radius) !important;
   }
 
@@ -1209,59 +1276,8 @@ body {
     overflow-wrap: anywhere !important;
   }
 
-  .tips-row,
-  .results-history-row {
+  .tips-row {
     min-height: 64px !important;
-  }
-
-  .results-overview {
-    align-items: center !important;
-    justify-content: space-between !important;
-    gap: 16px !important;
-    padding: 18px !important;
-    margin-bottom: 22px !important;
-  }
-
-  .results-stat-counts {
-    flex: 1 1 190px !important;
-    display: grid !important;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-    gap: 8px !important;
-  }
-
-  .results-filter {
-    position: sticky !important;
-    top: calc(var(--mobile-top-height) + 8px) !important;
-    z-index: 60 !important;
-    width: 100% !important;
-    display: grid !important;
-    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-    gap: 5px !important;
-    border-radius: 16px !important;
-    padding: 5px !important;
-    box-shadow: var(--shadow-card) !important;
-  }
-
-  .results-filter button {
-    width: 100% !important;
-    padding: 0 8px !important;
-    border-radius: 12px !important;
-    font-size: 12px !important;
-    white-space: normal !important;
-    line-height: 1.1 !important;
-  }
-
-  .results-builder-header,
-  .results-selection-row,
-  .results-history-row {
-    gap: 10px !important;
-  }
-
-  .results-history-status {
-    width: auto !important;
-    min-width: 86px !important;
-    padding-left: 0 !important;
-    text-align: right !important;
   }
 
   .mobile-bottom-nav {
@@ -1333,7 +1349,4 @@ body {
     font-size: 18px !important;
   }
 
-  .results-filter {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-  }
 }
